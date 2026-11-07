@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["jest", "node"],
+    "paths": { "@meets/shared": ["../../packages/shared/src"] }
+  },
+  "include": ["src", "test"]
+}

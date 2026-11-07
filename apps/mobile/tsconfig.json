@@ -2,6 +2,8 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "types": ["jest"]
+    "types": ["jest"],
+    // 공통 규칙은 빌드 결과가 아니라 원본 코드를 봅니다.
+    "paths": { "@meets/shared": ["../../packages/shared/src"] }
   }
 }
