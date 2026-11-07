@@ -6,7 +6,8 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "strictPropertyInitialization": false,
-    "types": ["jest", "node"]
+    "types": ["jest", "node"],
+    "paths": { "@meets/shared": ["../../packages/shared/src"] }
   },
   "include": ["src", "test", "prisma"]
 }
