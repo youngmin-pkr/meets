@@ -1,4 +1,4 @@
-# 포트폴리오 데모를 GitHub Pages에 올립니다.
+# 웹 버전(데모 모드)을 GitHub Pages에 올립니다.
 # main 브랜치에 코드가 들어오면 자동으로 실행되고, Actions 탭에서 직접 실행할 수도 있습니다.
 # 데모는 서버 없이 브라우저 안의 가짜 서버(apps/mobile/src/demoBackend.ts)로 동작합니다.
 name: Deploy demo to GitHub Pages

@@ -3,7 +3,7 @@
  *
  * - 보통: EXPO_PUBLIC_API_URL의 서버로 요청합니다. (예: http://192.168.0.10:3000)
  * - 데모 모드(EXPO_PUBLIC_DEMO_MODE=1): 서버 없이 브라우저 안의 가짜 서버(demoBackend)를 씁니다.
- *   GitHub Pages 포트폴리오 데모용입니다.
+ *   GitHub Pages에 올리는 웹 버전용입니다.
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
 import type { AgreedTerm, IdentityResult } from '@meets/shared';

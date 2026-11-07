@@ -2,7 +2,7 @@
 
 행사 동행 매칭 앱입니다. 규칙은 `docs/정리문서.md`, 작업 방식은 `CLAUDE.md`를 보세요.
 
-## 포트폴리오 데모
+## 웹에서 보기
 
 **https://youngmin-pkr.github.io/meets/** (main 브랜치에 코드가 들어오면 자동으로 새로 올라갑니다)
 

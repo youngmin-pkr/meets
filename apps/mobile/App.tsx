@@ -3,12 +3,12 @@
  */
 import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, Platform, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, View } from 'react-native';
 import type { IdentityResult } from '@meets/shared';
-import { api, IS_DEMO, setSessionToken, type Me, type SignupConfig } from './src/api';
+import { api, setSessionToken, type Me, type SignupConfig } from './src/api';
 import { screenAfterIdentity, screenForStep, type Screen } from './src/signupFlow';
 import { colors } from './src/theme';
-import { Body, keepWords, Page, PrimaryButton, Title } from './src/ui';
+import { Body, Page, PrimaryButton, Title } from './src/ui';
 import {
   AccountUnavailableScreen,
   HomePlaceholderScreen,
@@ -74,7 +74,6 @@ export default function App() {
     <View style={{ flex: 1, backgroundColor: colors.border }}>
       <View style={[{ flex: 1, width: '100%', backgroundColor: colors.background }, webPhoneWidth]}>
         <StatusBar style="dark" />
-        {IS_DEMO ? <DemoBanner /> : null}
         {screen === 'WELCOME' && (
           <WelcomeScreen
             onStart={() => {
@@ -106,14 +105,3 @@ export default function App() {
 
 /** 웹(PC 브라우저)에서는 휴대폰 폭으로 가운데에 보여 줍니다. */
 const webPhoneWidth = Platform.OS === 'web' ? { maxWidth: 480, alignSelf: 'center' as const } : null;
-
-/** 포트폴리오 데모라는 것을 알려 주는 띠 */
-function DemoBanner() {
-  return (
-    <View style={{ paddingTop: 12, paddingBottom: 10, paddingHorizontal: 16, backgroundColor: colors.ink }}>
-      <Text style={[{ color: colors.lime, fontSize: 12, fontWeight: '700', textAlign: 'center' }, keepWords]}>
-        포트폴리오 데모 · 서버 없이 브라우저 안에서 동작해요 (새로고침하면 처음부터)
-      </Text>
-    </View>
-  );
-}
