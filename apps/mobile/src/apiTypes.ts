@@ -1,5 +1,14 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
-import type { AgreedTerm, IdentityResult, SignupStep } from '@meets/shared';
+import type {
+  AgreedTerm,
+  EventCategory,
+  EventDetail,
+  EventReportInput,
+  EventReportResult,
+  EventSummary,
+  IdentityResult,
+  SignupStep,
+} from '@meets/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -41,4 +50,7 @@ export interface Backend {
   searchFandoms(q: string): Promise<Array<{ id: string; name: string }>>;
   setFandoms(fandomIds: string[], isPublic: boolean): Promise<Me>;
   setNotificationChoice(granted: boolean): Promise<Me>;
+  listEvents(query: { q?: string; category?: EventCategory }): Promise<EventSummary[]>;
+  getEvent(id: string): Promise<EventDetail>;
+  reportEvent(input: EventReportInput): Promise<EventReportResult>;
 }

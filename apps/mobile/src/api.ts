@@ -6,7 +6,7 @@
  *   GitHub Pages에 올리는 웹 버전용입니다.
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
-import type { AgreedTerm, IdentityResult } from '@meets/shared';
+import type { AgreedTerm, EventDetail, EventReportResult, EventSummary, IdentityResult } from '@meets/shared';
 import { ApiError, type Backend, type Me, type SignupConfig } from './apiTypes';
 import { createDemoBackend } from './demoBackend';
 
@@ -51,6 +51,12 @@ function createHttpBackend(baseUrl: string): Backend {
       call<Array<{ id: string; name: string }>>('GET', `/fandoms?q=${encodeURIComponent(q)}`),
     setFandoms: (fandomIds, isPublic) => call<Me>('PUT', '/me/fandoms', { fandomIds, isPublic }),
     setNotificationChoice: (granted) => call<Me>('POST', '/me/notification-choice', { granted }),
+    listEvents: ({ q, category }) => {
+      const parts = [q ? `q=${encodeURIComponent(q)}` : '', category ? `category=${category}` : ''].filter(Boolean);
+      return call<EventSummary[]>('GET', `/events${parts.length ? `?${parts.join('&')}` : ''}`);
+    },
+    getEvent: (id) => call<EventDetail>('GET', `/events/${encodeURIComponent(id)}`),
+    reportEvent: (input) => call<EventReportResult>('POST', '/event-reports', input),
   };
 }
 

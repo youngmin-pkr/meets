@@ -3,3 +3,5 @@ export * from './age';
 export * from './contact-detector';
 export * from './nickname';
 export * from './signup';
+export * from './events';
+export * from './sample-events';

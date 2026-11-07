@@ -23,6 +23,8 @@ export const POLICY_DEFAULTS = {
   FANDOM_MAX_COUNT: 3,
   /** 로그인 유지 기간(일) */
   SESSION_TTL_DAYS: 30,
+  /** 운영자 로그인 유지 기간(시간) */
+  ADMIN_SESSION_TTL_HOURS: 12,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

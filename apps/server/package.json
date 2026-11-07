@@ -8,9 +8,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prisma:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "ts-node prisma/seed.ts",
+    "db:seed": "npm run build -w @meets/shared --prefix ../.. && ts-node prisma/seed.ts",
     "test": "jest --runInBand",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "admin:create": "ts-node prisma/create-admin.ts"
   },
   "dependencies": {
     "@meets/shared": "^0.1.0",

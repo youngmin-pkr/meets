@@ -52,6 +52,7 @@ model User {
   consents TermsConsent[]
   fandoms  UserFandom[]
   sessions Session[]
+  eventReports EventReport[]
 }
 
 /// 본인 확인 기록. 이름·전화번호·생년월일은 저장하지 않고,
@@ -115,7 +116,7 @@ model PolicyValue {
   @@index([key, effectiveFrom])
 }
 
-/// 운영자의 모든 열람·변경 기록. 운영자 기능이 생기는 단계부터 씁니다.
+/// 운영자의 모든 열람·변경 기록 (누가, 언제, 무엇을, 왜)
 model AuditLog {
   id         String   @id @default(uuid())
   actorId    String
@@ -126,4 +127,161 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([targetType, targetId])
+  @@index([actorId])
+}
+
+// ───────────── 2단계: 행사와 운영자 ─────────────
+
+enum EventCategory {
+  PERFORMANCE
+  EXHIBITION
+}
+
+enum EventType {
+  CONCERT
+  FESTIVAL
+  EXHIBITION
+  POPUP
+  EXPO
+}
+
+/// 행사 상태 (정리문서 5장 "행사")
+enum EventStatus {
+  REPORTED
+  REVIEWING
+  REGISTERED
+  REJECTED
+  CHANGED
+  CANCELLED
+}
+
+/// 행사. 포스터·사진 없이 사실 정보만 저장합니다.
+model Event {
+  id             String        @id @default(uuid())
+  name           String
+  category       EventCategory
+  /// 제보로 들어온 행사는 검수 때 정합니다.
+  type           EventType?
+  venue          String?
+  officialUrl    String
+  /// 같은 행사인지 비교하는 값 (같은 공식 링크면 하나로 합침)
+  officialUrlKey String        @unique
+  ticketRequired Boolean       @default(true)
+  status         EventStatus
+  statusReason   String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  days          EventDay[]
+  meetingSpots  MeetingSpot[]
+  reports       EventReport[]
+
+  @@index([status])
+}
+
+/// 행사의 하루. 하루짜리 행사도 1개가 있습니다. 시각은 한국 시간 "HH:MM"입니다.
+model EventDay {
+  id        String         @id @default(uuid())
+  eventId   String
+  date      String
+  startTime String
+  endTime   String
+  event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  segments  EventSegment[]
+
+  @@unique([eventId, date])
+}
+
+/// 같이 볼 구간 후보
+model EventSegment {
+  id         String   @id @default(uuid())
+  eventDayId String
+  label      String
+  startTime  String
+  endTime    String
+  sortOrder  Int      @default(0)
+  eventDay   EventDay @relation(fields: [eventDayId], references: [id], onDelete: Cascade)
+}
+
+/// 만날 장소. 운영팀이 정하고 사용자는 만들지 않습니다.
+model MeetingSpot {
+  id           String  @id @default(uuid())
+  eventId      String
+  name         String
+  /// 공개된 장소인지. 공개된 장소만 사용자에게 보여 줍니다.
+  isPublicPlace Boolean
+  event        Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+}
+
+/// 사용자 제보. 같은 행사(같은 공식 링크)의 제보는 하나의 Event에 합칩니다.
+model EventReport {
+  id          String        @id @default(uuid())
+  reporterId  String
+  eventId     String
+  category    EventCategory
+  name        String
+  dateText    String?
+  placeText   String?
+  officialUrl String
+  createdAt   DateTime      @default(now())
+  /// 등록 안내 알림을 보낸 시각 (알림은 4단계에서 연결)
+  notifiedAt  DateTime?
+  reporter    User          @relation(fields: [reporterId], references: [id])
+  event       Event         @relation(fields: [eventId], references: [id])
+
+  @@unique([reporterId, eventId])
+}
+
+/// 운영자 역할 (정리문서 7장)
+enum AdminRole {
+  REVIEWER
+  REPORT_MANAGER
+  EVENT_MANAGER
+  ADMIN
+}
+
+model AdminUser {
+  id           String         @id @default(uuid())
+  loginId      String         @unique
+  /// 비밀번호 원문은 저장하지 않습니다.
+  passwordHash String
+  role         AdminRole
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  sessions     AdminSession[]
+}
+
+model AdminSession {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  adminId   String
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  admin     AdminUser @relation(fields: [adminId], references: [id])
+}
+
+enum ApprovalKind {
+  EVENT_CANCEL
+  USER_SUSPEND
+  POLICY_CHANGE
+}
+
+enum ApprovalStatus {
+  PENDING
+  CONFIRMED
+}
+
+/// 두 명 확인 작업. 제안자와 확정자는 달라야 합니다.
+model AdminApproval {
+  id            String         @id @default(uuid())
+  kind          ApprovalKind
+  targetId      String
+  reason        String
+  proposedById  String
+  confirmedById String?
+  status        ApprovalStatus @default(PENDING)
+  createdAt     DateTime       @default(now())
+  decidedAt     DateTime?
+
+  @@index([kind, targetId, status])
 }

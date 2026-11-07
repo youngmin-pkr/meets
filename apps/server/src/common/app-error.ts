@@ -13,7 +13,17 @@ export type AppErrorCode =
   | 'FANDOM_NOT_FOUND'
   | 'STEP_ORDER'
   | 'NOTIFICATION_ALREADY_ASKED'
-  | 'INVALID_TRANSITION';
+  | 'INVALID_TRANSITION'
+  | 'ADMIN_LOGIN_FAILED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'EVENT_INVALID'
+  | 'EVENT_DUPLICATE'
+  | 'EVENT_INCOMPLETE'
+  | 'EVENT_CLOSED'
+  | 'CONFIRM_REQUIRED'
+  | 'EVENT_REPORT_INVALID'
+  | 'APPROVAL_INVALID';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -27,6 +37,16 @@ const STATUS: Record<AppErrorCode, number> = {
   STEP_ORDER: 409,
   NOTIFICATION_ALREADY_ASKED: 409,
   INVALID_TRANSITION: 409,
+  ADMIN_LOGIN_FAILED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  EVENT_INVALID: 400,
+  EVENT_DUPLICATE: 409,
+  EVENT_INCOMPLETE: 409,
+  EVENT_CLOSED: 409,
+  CONFIRM_REQUIRED: 409,
+  EVENT_REPORT_INVALID: 400,
+  APPROVAL_INVALID: 409,
 };
 
 export class AppError extends Error {
@@ -35,7 +55,7 @@ export class AppError extends Error {
   constructor(
     readonly code: AppErrorCode,
     message: string,
-    readonly detail?: Record<string, string | number>,
+    readonly detail?: Record<string, string | number | boolean>,
   ) {
     super(message);
     this.name = 'AppError';

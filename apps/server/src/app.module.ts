@@ -1,5 +1,12 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { AccountStateService } from './account-state/account-state.service';
+import { AdminAuthService, AdminGuard } from './admin/admin-auth';
+import { AdminController } from './admin/admin.controller';
+import { AuditService } from './admin/audit.service';
+import { AdminEventsService } from './events/admin-events.service';
+import { EventStateService } from './events/event-state.service';
+import { EventsController } from './events/events.controller';
+import { EventsService } from './events/events.service';
 import { AuthGuard } from './auth/auth.guard';
 import { SessionService } from './auth/session.service';
 import { CLOCK, systemClock, type Clock } from './common/clock';
@@ -15,7 +22,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController],
+      controllers: [SignupController, EventsController, AdminController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -27,6 +34,12 @@ export class AppModule {
         SessionService,
         AuthGuard,
         SignupService,
+        AuditService,
+        AdminAuthService,
+        AdminGuard,
+        EventStateService,
+        EventsService,
+        AdminEventsService,
       ],
     };
   }

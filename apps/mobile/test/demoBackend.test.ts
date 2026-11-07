@@ -131,3 +131,58 @@ describe('데모: 팬덤과 알림', () => {
     await expect(backend.getMe()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 });
+
+describe('데모: 행사 선택과 제보', () => {
+  test('로그인하지 않으면 행사를 볼 수 없다', async () => {
+    const backend = createDemoBackend({ now: NOW });
+    await expect(backend.listEvents({})).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+
+  test('예시 행사가 날짜 순으로 보이고, 분류로 거를 수 있다', async () => {
+    const backend = await signedUp();
+    const all = await backend.listEvents({});
+    expect(all.length).toBeGreaterThanOrEqual(4);
+    const firstDates = all.map((e) => e.days[0].date);
+    expect(firstDates).toEqual([...firstDates].sort());
+    const exhibition = await backend.listEvents({ category: 'EXHIBITION' });
+    expect(exhibition.every((e) => e.category === 'EXHIBITION')).toBe(true);
+    expect(exhibition.length).toBeGreaterThan(0);
+  });
+
+  test('상세에는 공개된 만날 장소만 있다', async () => {
+    const backend = await signedUp();
+    const [first] = await backend.listEvents({});
+    const detail = await backend.getEvent(first.id);
+    expect(detail.meetingSpots.length).toBeGreaterThan(0);
+  });
+
+  test('새 제보는 접수되고 목록에는 바로 나오지 않는다', async () => {
+    const backend = await signedUp();
+    const before = (await backend.listEvents({})).length;
+    const r = await backend.reportEvent({
+      category: 'PERFORMANCE',
+      name: '새로운 테스트 공연',
+      officialUrl: 'https://example.com/brand-new',
+    });
+    expect(r).toEqual({ merged: false, progress: 'RECEIVED' });
+    expect((await backend.listEvents({})).length).toBe(before);
+  });
+
+  test('같은 공식 링크는 합치고, 등록된 행사면 등록됐다고 알려 준다', async () => {
+    const backend = await signedUp();
+    const [first] = await backend.listEvents({});
+    const r = await backend.reportEvent({
+      category: first.category,
+      name: '아무 이름',
+      officialUrl: `${first.officialUrl.replace('https://', 'https://www.')}/?utm_source=x`,
+    });
+    expect(r).toEqual({ merged: true, progress: 'REGISTERED' });
+  });
+
+  test('공식 링크가 없으면 거절', async () => {
+    const backend = await signedUp();
+    await expect(
+      backend.reportEvent({ category: 'PERFORMANCE', name: '모임', officialUrl: '' }),
+    ).rejects.toMatchObject({ code: 'EVENT_REPORT_INVALID', detail: { problem: 'OFFICIAL_URL_INVALID' } });
+  });
+});
