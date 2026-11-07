@@ -12,7 +12,11 @@ export type Screen =
   | 'PROFILE'
   | 'FANDOM'
   | 'READY'
-  | 'HOME';
+  /** 가입을 마친 사람의 첫 화면: 행사 선택 */
+  | 'HOME'
+  | 'EVENT_SELECTED'
+  | 'EVENT_REPORT'
+  | 'EVENT_REPORTED';
 
 export function screenForStep(step: SignupStep): Screen {
   switch (step) {

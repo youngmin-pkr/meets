@@ -74,13 +74,3 @@ export function AccountUnavailableScreen(props: { onDone: () => void }) {
     </Page>
   );
 }
-
-/** 1단계의 끝. 다음 단계(행사 고르기)가 생기면 바뀝니다. */
-export function HomePlaceholderScreen({ nickname }: { nickname: string | null }) {
-  return (
-    <Page>
-      <Title>{`${nickname ?? ''}님, 가입이 끝났어요`}</Title>
-      <Body>행사 고르기는 다음 단계에서 만들어요.</Body>
-    </Page>
-  );
-}

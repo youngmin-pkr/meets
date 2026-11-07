@@ -6,6 +6,14 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  checkEventReport,
+  EVENT_REPORT_PROBLEM_MESSAGES,
+  EVENT_TYPE_CATEGORY,
+  officialUrlKey,
+  sampleEvents,
+  type EventDetail,
+  type EventReportResult,
+  type EventSummary,
   AVATAR_COLOR_KEYS,
   AVATAR_COLORS,
   avatarInitial,
@@ -52,9 +60,55 @@ export const DEMO_FANDOMS = [
 /** 데모에서 '이미 쓰이는 별명'을 시연하려고 미리 넣어 둔 별명 */
 export const DEMO_TAKEN_NICKNAMES = ['동행러'];
 
+interface DemoEvent {
+  detail: EventDetail;
+  urlKey: string;
+  status: 'REPORTED' | 'REGISTERED';
+  reporters: Set<string>;
+}
+
+function isoOf(d: { year: number; month: number; day: number }): string {
+  return `${d.year}-${String(d.month).padStart(2, '0')}-${String(d.day).padStart(2, '0')}`;
+}
+
+/** 데모용 예시 행사 (오늘 기준 날짜). 등록된 행사로 시작합니다. */
+function buildDemoEvents(today: { year: number; month: number; day: number }): DemoEvent[] {
+  return sampleEvents(today).map((e, i) => ({
+    urlKey: officialUrlKey(e.officialUrl)!,
+    status: 'REGISTERED',
+    reporters: new Set<string>(),
+    detail: {
+      id: `demo-event-${i + 1}`,
+      name: e.name,
+      category: EVENT_TYPE_CATEGORY[e.type],
+      type: e.type,
+      venue: e.venue,
+      officialUrl: e.officialUrl,
+      ticketRequired: e.ticketRequired,
+      changed: false,
+      days: e.days.map((d, j) => ({
+        id: `demo-event-${i + 1}-day-${j + 1}`,
+        date: d.date,
+        startTime: d.startTime,
+        endTime: d.endTime,
+        segments: d.segments.map((s, k) => ({ id: `demo-seg-${i + 1}-${j + 1}-${k + 1}`, ...s })),
+      })),
+      // 사용자에게는 공개된 만날 장소만 보여 줍니다.
+      meetingSpots: e.meetingSpots
+        .filter((s) => s.isPublicPlace)
+        .map((s, k) => ({ id: `demo-spot-${i + 1}-${k + 1}`, name: s.name })),
+    },
+  }));
+}
+
+function toSummary(d: EventDetail): EventSummary {
+  return { ...d, days: d.days.map(({ id, date, startTime, endTime }) => ({ id, date, startTime, endTime })) };
+}
+
 export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
   const now = options.now ?? (() => new Date());
   const users: DemoUser[] = [];
+  const events = buildDemoEvents(todayInSeoul(now()));
   const takenKeys = new Set(DEMO_TAKEN_NICKNAMES.map(nicknameKey));
   const sessions = new Map<string, string>(); // 토큰 → 사용자 id
   let sessionToken: string | null = null;
@@ -201,6 +255,61 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       user.notificationChoice = granted ? 'ALLOWED' : 'DENIED';
       user.signupDone = true;
       return delay(toMe(user));
+    },
+
+    async listEvents({ q, category }) {
+      currentUser();
+      const today = isoOf(todayInSeoul(now()));
+      const query = (q ?? '').trim().toLowerCase();
+      const list = events
+        .filter((e) => e.status === 'REGISTERED')
+        .map((e) => e.detail)
+        .filter((d) => d.days.some((day) => day.date >= today))
+        .filter((d) => !category || d.category === category)
+        .filter((d) => !query || d.name.toLowerCase().includes(query) || d.venue.toLowerCase().includes(query))
+        .sort((a, b) => a.days[0].date.localeCompare(b.days[0].date) || a.name.localeCompare(b.name));
+      return delay(list.map(toSummary));
+    },
+
+    async getEvent(id) {
+      currentUser();
+      const found = events.find((e) => e.detail.id === id && e.status === 'REGISTERED');
+      if (!found) throw new ApiError('NOT_FOUND', '행사를 찾을 수 없어요.');
+      return delay(found.detail);
+    },
+
+    async reportEvent(input): Promise<EventReportResult> {
+      const user = currentUser();
+      const check = checkEventReport(input);
+      if (!check.ok) {
+        throw new ApiError('EVENT_REPORT_INVALID', EVENT_REPORT_PROBLEM_MESSAGES[check.problem], {
+          problem: check.problem,
+        });
+      }
+      const existing = events.find((e) => e.urlKey === check.urlKey);
+      if (existing) {
+        existing.reporters.add(user.id);
+        return delay({ merged: true, progress: existing.status === 'REGISTERED' ? 'REGISTERED' : 'RECEIVED' });
+      }
+      // 제보된 행사는 운영팀 검수 전까지 목록에 나오지 않습니다.
+      events.push({
+        urlKey: check.urlKey,
+        status: 'REPORTED',
+        reporters: new Set([user.id]),
+        detail: {
+          id: `demo-report-${events.length + 1}`,
+          name: input.name.trim(),
+          category: input.category,
+          type: input.category === 'PERFORMANCE' ? 'CONCERT' : 'EXHIBITION',
+          venue: input.placeText?.trim() ?? '',
+          officialUrl: input.officialUrl.trim(),
+          ticketRequired: true,
+          changed: false,
+          days: [],
+          meetingSpots: [],
+        },
+      });
+      return delay({ merged: false, progress: 'RECEIVED' });
     },
   };
 }

@@ -4,14 +4,13 @@
 import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, Platform, View } from 'react-native';
-import type { IdentityResult } from '@meets/shared';
+import type { EventReportInput, EventReportResult, EventSummary, IdentityResult } from '@meets/shared';
 import { api, setSessionToken, type Me, type SignupConfig } from './src/api';
 import { screenAfterIdentity, screenForStep, type Screen } from './src/signupFlow';
 import { colors } from './src/theme';
 import { Body, Page, PrimaryButton, Title } from './src/ui';
 import {
   AccountUnavailableScreen,
-  HomePlaceholderScreen,
   TeenNotYetScreen,
   UnderMinAgeScreen,
   WelcomeScreen,
@@ -20,6 +19,9 @@ import { VerifyScreen } from './src/screens/VerifyScreen';
 import { ProfileScreen } from './src/screens/ProfileScreen';
 import { FandomScreen } from './src/screens/FandomScreen';
 import { ReadyScreen } from './src/screens/ReadyScreen';
+import { EventListScreen } from './src/screens/EventListScreen';
+import { EventSelectedScreen } from './src/screens/EventSelectedScreen';
+import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
 
 export default function App() {
   const [config, setConfig] = useState<SignupConfig | null>(null);
@@ -27,6 +29,8 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('WELCOME');
   const [verifyMode, setVerifyMode] = useState<'signup' | 'login'>('signup');
   const [me, setMe] = useState<Me | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<EventSummary | null>(null);
+  const [reported, setReported] = useState<{ input: EventReportInput; result: EventReportResult } | null>(null);
 
   function loadConfig() {
     setLoadError(null);
@@ -97,7 +101,30 @@ export default function App() {
           <FandomScreen config={config} onBack={() => setScreen('PROFILE')} onDone={afterSave} />
         )}
         {screen === 'READY' && me && <ReadyScreen me={me} onDone={afterSave} />}
-        {screen === 'HOME' && <HomePlaceholderScreen nickname={me?.nickname ?? null} />}
+        {screen === 'HOME' && (
+          <EventListScreen
+            onNext={(event) => {
+              setSelectedEvent(event);
+              setScreen('EVENT_SELECTED');
+            }}
+            onReport={() => setScreen('EVENT_REPORT')}
+          />
+        )}
+        {screen === 'EVENT_SELECTED' && selectedEvent && (
+          <EventSelectedScreen event={selectedEvent} onBack={() => setScreen('HOME')} />
+        )}
+        {screen === 'EVENT_REPORT' && (
+          <EventReportScreen
+            onBack={() => setScreen('HOME')}
+            onDone={(input, result) => {
+              setReported({ input, result });
+              setScreen('EVENT_REPORTED');
+            }}
+          />
+        )}
+        {screen === 'EVENT_REPORTED' && reported && (
+          <EventReportedScreen input={reported.input} result={reported.result} onDone={() => setScreen('HOME')} />
+        )}
       </View>
     </View>
   );
