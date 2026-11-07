@@ -1,0 +1,129 @@
+// 1단계(가입·본인 확인)에 필요한 표만 만듭니다.
+// 나머지 엔티티는 해당 단계에서 추가합니다.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// 나이 구분. 본인 확인 결과로만 정해지고 사용자가 바꿀 수 없습니다.
+/// (미인증·가입 불가는 계정이 만들어지기 전 상태라 저장하지 않습니다.)
+enum AgeClass {
+  ADULT
+  TEEN
+}
+
+/// 이용 상태
+enum AccountStatus {
+  ACTIVE
+  SUSPENDED
+  WITHDRAWN
+}
+
+enum NotificationChoice {
+  ALLOWED
+  DENIED
+}
+
+model User {
+  id                    String              @id @default(uuid())
+  nickname              String?
+  /// 같은 별명 막기용 (영문은 소문자로 바꾼 값)
+  nicknameKey           String?             @unique
+  avatarInitial         String?
+  avatarColor           String?
+  ageClass              AgeClass
+  status                AccountStatus       @default(ACTIVE)
+  fandomPublic          Boolean             @default(false)
+  trustLevel            Int                 @default(1)
+  profileCompletedAt    DateTime?
+  fandomStepCompletedAt DateTime?
+  notificationChoice    NotificationChoice?
+  signupCompletedAt     DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  identity IdentityVerification?
+  consents TermsConsent[]
+  fandoms  UserFandom[]
+  sessions Session[]
+}
+
+/// 본인 확인 기록. 이름·전화번호·생년월일은 저장하지 않고,
+/// 같은 사람이 계정을 두 개 만들지 못하도록 CI의 해시만 둡니다.
+model IdentityVerification {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  ciHash     String   @unique
+  provider   String
+  verifiedAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
+}
+
+model TermsConsent {
+  id          String   @id @default(uuid())
+  userId      String
+  termCode    String
+  termVersion String
+  agreedAt    DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, termCode, termVersion])
+}
+
+model Fandom {
+  id        String       @id @default(uuid())
+  name      String       @unique
+  createdAt DateTime     @default(now())
+  users     UserFandom[]
+}
+
+model UserFandom {
+  userId    String
+  fandomId  String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  fandom    Fandom   @relation(fields: [fandomId], references: [id])
+
+  @@id([userId, fandomId])
+}
+
+/// 로그인 유지. 토큰 원문은 저장하지 않고 해시만 둡니다.
+model Session {
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+/// 정책 값. 같은 key가 여러 줄이면 적용 시작이 지난 것 중 가장 최근 값을 씁니다.
+/// (값을 바꾸는 기능과 두 명 확인은 운영 콘솔 단계에서 만듭니다.)
+model PolicyValue {
+  id            String   @id @default(uuid())
+  key           String
+  value         Json
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+
+  @@index([key, effectiveFrom])
+}
+
+/// 운영자의 모든 열람·변경 기록. 운영자 기능이 생기는 단계부터 씁니다.
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String
+  action     String
+  targetType String
+  targetId   String?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+}
