@@ -7,8 +7,9 @@
  */
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import type { IdentityResult } from '@meets/shared';
+import { todayInSeoul, type IdentityResult } from '@meets/shared';
 import { api, ApiError, type SignupConfig } from '../api';
+import { describeIsoDate, parseBirthInput } from '../birthInput';
 import { allRequiredChecked } from '../signupFlow';
 import { colors } from '../theme';
 import { Body, Card, ErrorText, Page, PrimaryButton, styles, Title, TopBar } from '../ui';
@@ -29,13 +30,14 @@ export function VerifyScreen(props: {
   const [loading, setLoading] = useState(false);
 
   const termsOk = !showTerms || allRequiredChecked(config.terms, checked);
-  const testOk = /^[A-Za-z0-9_-]{1,40}$/.test(testPerson) && /^\d{4}-\d{2}-\d{2}$/.test(testBirth);
+  const birthIso = parseBirthInput(testBirth, todayInSeoul().year);
+  const testOk = /^[A-Za-z0-9_-]{1,40}$/.test(testPerson) && birthIso !== null;
 
   async function submit() {
     setError(null);
     setLoading(true);
     try {
-      const token = `fake:${testPerson}:${testBirth}`;
+      const token = `fake:${testPerson}:${birthIso}`;
       const agreed = showTerms
         ? config.terms.filter((t) => checked[t.code]).map((t) => ({ code: t.code, version: t.version }))
         : [];
@@ -119,10 +121,18 @@ export function VerifyScreen(props: {
           <TextInput
             value={testBirth}
             onChangeText={setTestBirth}
-            placeholder="예: 2000-05-01"
-            keyboardType="numbers-and-punctuation"
+            placeholder="예: 000501"
+            keyboardType="number-pad"
+            maxLength={10}
             style={styles.input}
           />
+          <Text style={styles.small}>
+            {testBirth === ''
+              ? '6자리(000501)나 8자리(20000501)로 입력하세요'
+              : birthIso
+                ? `${describeIsoDate(birthIso)}로 확인해요`
+                : '생년월일을 다시 확인해 주세요'}
+          </Text>
         </View>
       ) : null}
 
