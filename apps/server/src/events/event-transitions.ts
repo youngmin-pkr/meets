@@ -35,6 +35,21 @@ export const EVENT_TRANSITIONS: EventTransition[] = [
     condition: '수정 저장 전 확인을 거친 뒤, 약속한 모든 사람에게 안내하고 약속은 다시 정하기가 됨',
   },
   {
+    from: 'CHANGED',
+    to: 'CHANGED',
+    // 사용자 결정(2026-11-07): 일정이 한 번 바뀐 행사도 다시 바꿀 수 있음. 조건은 '등록 → 변경됨'과 같음.
+    // TODO(4단계): 약속한 모든 사람에게 안내하고 약속은 다시 정하기가 됨
+    condition: '수정 저장 전 확인을 거친 뒤, 약속한 모든 사람에게 안내하고 약속은 다시 정하기가 됨',
+  },
+  {
+    from: 'CHANGED',
+    to: 'CANCELLED',
+    // 사용자 결정(2026-11-07): 일정이 바뀐 행사도 취소할 수 있음. 조건은 '등록 → 취소'와 같음.
+    // TODO(4단계): 약속을 자동 종료하고 후기 요청은 보내지 않습니다.
+    condition: '운영자 2명이 확인. 약속은 자동 종료되고 후기 요청은 보내지 않음',
+    requiresTwoPersonApproval: true,
+  },
+  {
     from: 'REGISTERED',
     to: 'CANCELLED',
     // TODO(4단계): 약속을 자동 종료하고 후기 요청은 보내지 않습니다.

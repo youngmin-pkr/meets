@@ -132,7 +132,7 @@ export class AdminEventsService {
     try {
       await this.prisma.$transaction(async (tx) => {
         if (needsChangedState) {
-          // 표에 따라 '등록 → 변경됨'만 허용합니다. (변경됨 상태에서 또 바꾸는 것은 표에 없어 거절됨)
+          // 표에 따라 '등록 → 변경됨' 또는 '변경됨 → 변경됨'
           await this.eventState.transition(tx, id, current.status, 'CHANGED');
         }
         await tx.eventDay.deleteMany({ where: { eventId: id } });
@@ -208,7 +208,7 @@ export class AdminEventsService {
   async proposeCancel(adminId: string, id: string, reason: string) {
     const event = await this.prisma.event.findUnique({ where: { id } });
     if (!event) throw new AppError('NOT_FOUND', '행사를 찾을 수 없어요.');
-    if (event.status !== 'REGISTERED') {
+    if (event.status !== 'REGISTERED' && event.status !== 'CHANGED') {
       throw new AppError('INVALID_TRANSITION', '등록된 행사만 취소할 수 있어요.');
     }
     const pending = await this.prisma.adminApproval.findFirst({

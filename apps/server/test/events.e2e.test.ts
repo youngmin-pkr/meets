@@ -287,13 +287,17 @@ describe('운영자: 행사 수정 (등록 → 변경됨)', () => {
     expect(await prisma.event.findUniqueOrThrow({ where: { id } })).toMatchObject({ status: 'REGISTERED', name: '이름 고침' });
   });
 
-  test('변경됨 상태에서 일정을 또 바꾸는 것은 표에 없어 거절한다', async () => {
+  test('변경됨 상태에서도 일정을 다시 바꿀 수 있고, 이때도 저장 전 확인을 받는다', async () => {
     const token = await adminToken(app, 'EVENT_MANAGER');
     const id = await createEvent(token);
     await http(app).put(`/admin/events/${id}`).set(auth(token)).send({ ...eventInput(newSchedule), confirmed: true }).expect(200);
     const again = { days: [{ date: '2026-12-14', startTime: '15:00', endTime: '21:00', segments: [] }] };
-    const res = await http(app).put(`/admin/events/${id}`).set(auth(token)).send({ ...eventInput(again), confirmed: true }).expect(409);
-    expect(res.body.code).toBe('INVALID_TRANSITION');
+    const ask = await http(app).put(`/admin/events/${id}`).set(auth(token)).send(eventInput(again)).expect(409);
+    expect(ask.body.code).toBe('CONFIRM_REQUIRED');
+    await http(app).put(`/admin/events/${id}`).set(auth(token)).send({ ...eventInput(again), confirmed: true }).expect(200);
+    const saved = await prisma.event.findUniqueOrThrow({ where: { id }, include: { days: true } });
+    expect(saved.status).toBe('CHANGED');
+    expect(saved.days.map((d) => d.date)).toEqual(['2026-12-14']);
   });
 });
 
@@ -319,6 +323,17 @@ describe('운영자: 행사 취소 (두 명 확인)', () => {
 
     const user = await signUpAdult(app);
     expect((await http(app).get('/events').set(auth(user)).expect(200)).body).toEqual([]);
+  });
+
+  test('일정이 바뀐(변경됨) 행사도 두 명 확인으로 취소할 수 있다', async () => {
+    const manager = await adminToken(app, 'EVENT_MANAGER', 'manager');
+    const admin = await adminToken(app, 'ADMIN', 'boss');
+    const id = await createEvent(manager);
+    const changed = { days: [{ date: '2026-12-13', startTime: '15:00', endTime: '21:00', segments: [] }] };
+    await http(app).put(`/admin/events/${id}`).set(auth(manager)).send({ ...eventInput(changed), confirmed: true }).expect(200);
+    const p = await http(app).post(`/admin/events/${id}/cancel-proposals`).set(auth(manager)).send({ reason: '취소 공지' }).expect(201);
+    await http(app).post(`/admin/event-cancellations/${p.body.id}/confirm`).set(auth(admin)).expect(200);
+    expect((await prisma.event.findUniqueOrThrow({ where: { id } })).status).toBe('CANCELLED');
   });
 
   test('행사 담당은 확정할 수 없고, 관리자는 제안할 수 없다', async () => {

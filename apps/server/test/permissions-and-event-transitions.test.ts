@@ -50,6 +50,9 @@ describe('행사 상태 전이 표', () => {
     ['REVIEWING', 'REJECTED'],
     ['REGISTERED', 'CHANGED'],
     ['REGISTERED', 'CANCELLED'],
+    // 사용자 결정(2026-11-07)으로 추가
+    ['CHANGED', 'CHANGED'],
+    ['CHANGED', 'CANCELLED'],
   ];
   const twoPeople = { proposedBy: 'event-manager', confirmedBy: 'admin' };
   const pairs = EVENT_STATUS_STATES.flatMap((from) => EVENT_STATUS_STATES.map((to) => [from, to] as const));
@@ -60,8 +63,12 @@ describe('행사 상태 전이 표', () => {
     else expect(() => assertEventTransition(from, to, twoPeople)).toThrow(expect.objectContaining({ code: 'INVALID_TRANSITION' }));
   });
 
-  test('행사 취소는 두 명 확인이 필요하다', () => {
+  test('행사 취소는 두 명 확인이 필요하다 (변경됨에서 취소할 때도)', () => {
     expect(() => assertEventTransition('REGISTERED', 'CANCELLED')).toThrow();
+    expect(() => assertEventTransition('CHANGED', 'CANCELLED')).toThrow();
+    expect(() =>
+      assertEventTransition('CHANGED', 'CANCELLED', { proposedBy: 'a', confirmedBy: 'a' }),
+    ).toThrow(/직접 확정/);
     expect(() =>
       assertEventTransition('REGISTERED', 'CANCELLED', { proposedBy: 'a', confirmedBy: 'a' }),
     ).toThrow(/직접 확정/);
