@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.log
+.expo/
+coverage/
+**/src/generated/
