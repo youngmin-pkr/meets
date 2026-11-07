@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import { api, type Me } from '../api';
+import { api, IS_DEMO, type Me } from '../api';
 import { colors } from '../theme';
 import { Body, Card, ErrorText, Page, PrimaryButton, Title } from '../ui';
 
@@ -15,7 +15,10 @@ export function ReadyScreen(props: { me: Me; onDone: (me: Me) => void }) {
     setLoading(true);
     try {
       let granted = false;
-      if (wantsNotifications) {
+      if (wantsNotifications && IS_DEMO) {
+        // 데모에서는 브라우저 알림 권한을 실제로 묻지 않습니다.
+        granted = true;
+      } else if (wantsNotifications) {
         const result = await Notifications.requestPermissionsAsync();
         granted = result.granted;
       }

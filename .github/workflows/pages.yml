@@ -1,0 +1,59 @@
+# 포트폴리오 데모를 GitHub Pages에 올립니다.
+# main 브랜치에 코드가 들어오면 자동으로 실행되고, Actions 탭에서 직접 실행할 수도 있습니다.
+# 데모는 서버 없이 브라우저 안의 가짜 서버(apps/mobile/src/demoBackend.ts)로 동작합니다.
+name: Deploy demo to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # 서버 없이 돌 수 있는 테스트만 실행합니다. (서버 테스트는 DB가 필요)
+      - name: Test shared rules and app
+        run: npm test -w @meets/shared -w @meets/mobile
+
+      - name: Build demo web app
+        working-directory: apps/mobile
+        env:
+          EXPO_PUBLIC_DEMO_MODE: '1'
+          # 저장소 이름. 주소가 https://<아이디>.github.io/meets/ 가 됩니다.
+          EXPO_BASE_URL: /meets
+          CI: '1'
+        run: npx expo export --platform web --output-dir dist
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/mobile/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,6 +1,6 @@
 /** 여러 화면에서 같이 쓰는 버튼·제목 같은 조각 */
 import type { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
 import { colors } from './theme';
 
 export function Page({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
@@ -27,12 +27,15 @@ export function TopBar({ label, onBack }: { label?: string; onBack?: () => void 
   );
 }
 
+/** 웹에서 한국어가 단어 중간에서 줄바꿈되지 않도록 합니다. (휴대폰 앱에서는 기본 동작이 이미 같음) */
+export const keepWords = (Platform.OS === 'web' ? { wordBreak: 'keep-all' } : {}) as TextStyle;
+
 export function Title({ children }: { children: ReactNode }) {
-  return <Text style={styles.title}>{children}</Text>;
+  return <Text style={[styles.title, keepWords]}>{children}</Text>;
 }
 
 export function Body({ children }: { children: ReactNode }) {
-  return <Text style={styles.body}>{children}</Text>;
+  return <Text style={[styles.body, keepWords]}>{children}</Text>;
 }
 
 export function Card({ children }: { children: ReactNode }) {
