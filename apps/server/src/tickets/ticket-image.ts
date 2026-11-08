@@ -24,7 +24,7 @@ export async function maskTicketImage(
     throw new AppError('IMAGE_TOO_LARGE', `이미지는 ${Math.round(maxBytes / 1024 / 1024)}MB까지 올릴 수 있어요.`);
   }
 
-  let rotated: { data: Buffer; info: sharp.OutputInfo };
+  let rotated: { data: Buffer; info: { width: number; height: number } };
   try {
     // rotate(): 사진의 회전 정보를 적용한 뒤 그 정보를 지웁니다.
     rotated = await sharp(original).rotate().toBuffer({ resolveWithObject: true });
