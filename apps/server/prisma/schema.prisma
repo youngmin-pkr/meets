@@ -60,6 +60,7 @@ model User {
   sentProposals       Proposal[] @relation("ProposalSender")
   receivedProposals   Proposal[] @relation("ProposalReceiver")
   appointmentParticipations AppointmentParticipant[]
+  notifications       Notification[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -469,10 +470,16 @@ model Proposal {
   senderId      String
   receiverId    String
   eventId       String
-  eventDayId    String
+  /// 행사 일정이 바뀌어 이 날이 없어지면 비워집니다. 그래도 아래 date·구간·장소 이름은 남습니다.
+  eventDayId    String?
   /// 함께할 구간 (EventSegment id). 구간이 없는 날은 빈 목록
   segmentIds    String[]
-  meetingSpotId String
+  meetingSpotId String?
+  /// 제안한 날 (보낼 때의 값)
+  date          String
+  /// 제안한 구간 [{id,label,startTime,endTime}] (보낼 때의 값)
+  segmentsSnapshot Json
+  meetingSpotName String
   status        ProposalStatus
   expiresAt     DateTime
   respondedAt   DateTime?
@@ -481,8 +488,8 @@ model Proposal {
   sender        User           @relation("ProposalSender", fields: [senderId], references: [id])
   receiver      User           @relation("ProposalReceiver", fields: [receiverId], references: [id])
   event         Event          @relation(fields: [eventId], references: [id])
-  eventDay      EventDay       @relation(fields: [eventDayId], references: [id])
-  meetingSpot   MeetingSpot    @relation(fields: [meetingSpotId], references: [id])
+  eventDay      EventDay?      @relation(fields: [eventDayId], references: [id], onDelete: SetNull)
+  meetingSpot   MeetingSpot?   @relation(fields: [meetingSpotId], references: [id], onDelete: SetNull)
   appointment   Appointment?
 
   @@index([receiverId, status])
@@ -507,31 +514,99 @@ model Appointment {
   id            String                   @id @default(uuid())
   proposalId    String                   @unique
   eventId       String
-  eventDayId    String
+  /// 행사 일정이 바뀌어 이 날이 없어지면 비워집니다. (다시 정할 수 없고 기한이 지나면 보류)
+  eventDayId    String?
   segmentIds    String[]
-  meetingSpotId String
+  meetingSpotId String?
+  /// 약속 날짜와 시간 (한국 시간). 고른 구간의 처음~끝
+  date          String
+  startTime     String
+  endTime       String
+  /// 약속한 구간 [{id,label,startTime,endTime}]
+  segmentsSnapshot Json
+  meetingSpotName String
+  /// 약속을 만들 때의 정책 값 (정책 값이 바뀌어도 이미 만든 약속에는 소급하지 않음)
+  policy        Json
   status        AppointmentStatus
   confirmedAt   DateTime?
+  /// CANCELLED | NO_CONFIRM | NO_SHOW | EVENT_CANCELLED
   endReason     String?
+  cancelledById String?
+  cancelReason  String?
+  /// 행사 일정이 바뀌었을 때 다시 정하기 기한
+  rescheduleDeadline DateTime?
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
   proposal      Proposal                 @relation(fields: [proposalId], references: [id])
   event         Event                    @relation(fields: [eventId], references: [id])
-  eventDay      EventDay                 @relation(fields: [eventDayId], references: [id])
-  meetingSpot   MeetingSpot              @relation(fields: [meetingSpotId], references: [id])
+  eventDay      EventDay?                @relation(fields: [eventDayId], references: [id], onDelete: SetNull)
+  meetingSpot   MeetingSpot?             @relation(fields: [meetingSpotId], references: [id], onDelete: SetNull)
   participants  AppointmentParticipant[]
+  notifications Notification[]
+
+  @@index([eventId, status])
 }
 
-/// 약속에 참여하는 사람. 전날 확인·도착 기록·취소는 4단계에서 씁니다.
+/// 약속에 참여하는 사람의 확인·도착·취소 기록
 model AppointmentParticipant {
   appointmentId        String
   userId               String
+  /// 전날 확인 ('갈 수 있어요')
   dayBeforeConfirmedAt DateTime?
+  /// 행사 일정이 바뀐 뒤 다시 확인
+  rescheduleConfirmedAt DateTime?
   arrivedAt            DateTime?
   cancelledAt          DateTime?
+  /// 약속 24시간 안에 취소함 (신뢰 단계는 7단계에서 반영)
   lateCancel           Boolean?
+  /// 확인 마감까지 확인하지 않음 (신뢰 단계는 7단계에서 반영)
+  noResponse           Boolean                @default(false)
+  /// 이 사람이 '안 나왔어요'를 누른 시각
+  noShowReportedAt     DateTime?
+  /// 같은 알림을 두 번 보내지 않기 위한 기록
+  dayBeforeNotifiedAt  DateTime?
+  reminderNotifiedAt   DateTime?
+  soonNotifiedAt       DateTime?
   appointment          Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   user                 User        @relation(fields: [userId], references: [id])
 
   @@id([appointmentId, userId])
 }
+
+enum NotificationKind {
+  PROPOSAL_RECEIVED
+  PROPOSAL_ACCEPTED
+  PROPOSAL_REJECTED
+  DAY_BEFORE_CONFIRM
+  DAY_BEFORE_REMINDER
+  APPOINTMENT_CONFIRMED
+  NO_CONFIRM_PARTNER
+  NO_CONFIRM_SELF
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_SOON
+  PARTNER_ARRIVED
+  APPOINTMENT_ENDED_EARLY
+  EVENT_SCHEDULE_CHANGED
+  APPOINTMENT_ON_HOLD
+  EVENT_CANCELLED
+}
+
+/// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
+model Notification {
+  id            String           @id @default(uuid())
+  userId        String
+  kind          NotificationKind
+  title         String
+  body          String
+  appointmentId String?
+  proposalId    String?
+  /// 방해 금지 시간을 피한 푸시 가능 시각
+  pushAt        DateTime
+  readAt        DateTime?
+  createdAt     DateTime         @default(now())
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointment   Appointment?     @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+

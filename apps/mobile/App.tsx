@@ -13,6 +13,7 @@ import {
   type TicketConfirmResult,
   type TicketKind,
   type CandidateCard,
+  type EventCategory,
   type EventDetail,
   type EventReportInput,
   type EventReportResult,
@@ -45,12 +46,8 @@ import {
   TicketUploadScreen,
 } from './src/screens/TicketScreens';
 import type { PickedImage } from './src/ticketFlow';
-import {
-  AppointmentScreen,
-  HomeScreen,
-  ProposalSentScreen,
-  ProposalsScreen,
-} from './src/screens/ProposalScreens';
+import { ProposalSentScreen, ProposalsScreen } from './src/screens/ProposalScreens';
+import { AppointmentScreen, CancelAppointmentScreen, HomeScreen, NotificationsScreen } from './src/screens/AppointmentScreens';
 import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
 
 export default function App() {
@@ -78,6 +75,7 @@ export default function App() {
   const [appointment, setAppointment] = useState<AppointmentView | null>(null);
   const [justAccepted, setJustAccepted] = useState(false);
   const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
+  const [eventCategory, setEventCategory] = useState<EventCategory | undefined>(undefined);
   const [reported, setReported] = useState<{ input: EventReportInput; result: EventReportResult } | null>(null);
 
   function loadConfig() {
@@ -115,6 +113,31 @@ export default function App() {
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : '다시 시도해 주세요.');
     }
+  }
+
+  /** 약속 화면의 '다른 후보 보러 가기': 이미 입력했으면 후보로, 아니면 일정 입력부터 */
+  async function openCandidates(eventId: string) {
+    setFlowError(null);
+    try {
+      const [detail, saved] = await Promise.all([api.getEvent(eventId), api.getPreference(eventId)]);
+      setEvent(detail);
+      setDraft(initialDraft(detail, saved, todayIso()));
+      if (saved) {
+        setMyTicket(await api.getTicketStatus(eventId).catch(() => null));
+        setScreen('CANDIDATES');
+      } else {
+        setScreen('SCHEDULE');
+      }
+    } catch (e) {
+      setFlowError(e instanceof Error ? e.message : '다시 시도해 주세요.');
+      setScreen('EVENTS');
+    }
+  }
+
+  function openAppointment(a: AppointmentView, accepted = false) {
+    setAppointment(a);
+    setJustAccepted(accepted);
+    setScreen('APPOINTMENT');
   }
 
   async function submitPreference() {
@@ -251,17 +274,18 @@ export default function App() {
         {screen === 'HOME' && (
           <HomeScreen
             nickname={me?.nickname ?? ''}
-            onFindEvents={() => setScreen('EVENTS')}
-            onProposals={() => setScreen('PROPOSALS')}
-            onAppointment={(a) => {
-              setAppointment(a);
-              setJustAccepted(false);
-              setScreen('APPOINTMENT');
+            onFindEvents={(category) => {
+              setEventCategory(category);
+              setScreen('EVENTS');
             }}
+            onProposals={() => setScreen('PROPOSALS')}
+            onAppointment={(a) => openAppointment(a)}
+            onNotifications={() => setScreen('NOTIFICATIONS')}
           />
         )}
         {screen === 'EVENTS' && (
           <EventListScreen
+            initialCategory={eventCategory}
             onNext={startFlow}
             onReport={() => setScreen('EVENT_REPORT')}
             onBack={() => setScreen('HOME')}
@@ -271,15 +295,37 @@ export default function App() {
         {screen === 'PROPOSALS' && (
           <ProposalsScreen
             onBack={() => setScreen('HOME')}
-            onAccepted={(a) => {
-              setAppointment(a);
-              setJustAccepted(true);
-              setScreen('APPOINTMENT');
-            }}
+            onAccepted={(a) => openAppointment(a, true)}
           />
         )}
         {screen === 'APPOINTMENT' && appointment && (
-          <AppointmentScreen appointment={appointment} justAccepted={justAccepted} onBack={() => setScreen('HOME')} />
+          <AppointmentScreen
+            key={`${appointment.id}-${appointment.status}`}
+            appointment={appointment}
+            justAccepted={justAccepted}
+            onBack={() => setScreen('HOME')}
+            onCancel={(a) => {
+              setAppointment(a);
+              setScreen('APPOINTMENT_CANCEL');
+            }}
+            onFindOthers={openCandidates}
+          />
+        )}
+        {screen === 'APPOINTMENT_CANCEL' && appointment && (
+          <CancelAppointmentScreen appointment={appointment} onBack={() => setScreen('APPOINTMENT')} onDone={(a) => openAppointment(a)} />
+        )}
+        {screen === 'NOTIFICATIONS' && (
+          <NotificationsScreen
+            onBack={() => setScreen('HOME')}
+            onProposals={() => setScreen('PROPOSALS')}
+            onAppointment={async (id) => {
+              try {
+                openAppointment(await api.getAppointment(id));
+              } catch {
+                setScreen('HOME');
+              }
+            }}
+          />
         )}
         {screen === 'PROPOSAL_SENT' && sentProposal && (
           <ProposalSentScreen proposal={sentProposal} onDone={() => setScreen('CANDIDATES')} onHome={() => setScreen('HOME')} />

@@ -51,6 +51,28 @@ export const POLICY_DEFAULTS = {
   PROPOSAL_EVENT_CUTOFF_HOURS: 24,
   /** '참석 예정'인 사람이 한 제안에 고를 수 있는 구간 수 (시안: 첫 제안은 짧은 구간만) */
   PROPOSAL_PLANNED_MAX_SEGMENTS: 1,
+  /** 전날 확인 요청을 보내는 시각(전날 몇 시, 한국 시간) (정리문서 정책 값 5) */
+  APPOINTMENT_DAY_BEFORE_HOUR: 18,
+  /** 전날 확인 마감: 약속 시작 몇 시간 전까지 '갈 수 있어요'를 눌러야 하는지 (2026-11-08 사용자 확인) */
+  APPOINTMENT_CONFIRM_DEADLINE_HOURS: 3,
+  /** 재촉 알림: 확인 마감 몇 시간 전에 한 번 (2026-11-08 사용자 확인) */
+  APPOINTMENT_CONFIRM_REMINDER_HOURS: 3,
+  /** 무료 취소 기한: 약속 몇 시간 전까지 취소하면 신뢰 단계에 영향 없음 (정리문서 정책 값 6) */
+  APPOINTMENT_FREE_CANCEL_HOURS: 24,
+  /** 노쇼 판단 대기: 약속 시각 몇 분 뒤부터 '안 나왔어요'를 누를 수 있는지 (정리문서 정책 값 7) */
+  APPOINTMENT_NO_SHOW_WAIT_MINUTES: 15,
+  /** '곧 약속' 알림: 약속 몇 분 전 (2026-11-08 사용자 확인) */
+  APPOINTMENT_SOON_MINUTES: 60,
+  /** '도착했어요'는 약속 몇 분 전부터 누를 수 있는지 */
+  APPOINTMENT_ARRIVAL_OPEN_MINUTES: 60,
+  /** 행사 변경 후 다시 정하기 기한(시간) (정리문서 정책 값 14) */
+  RESCHEDULE_DEADLINE_HOURS: 48,
+  /** 행사까지 기한보다 적게 남았으면, 행사 몇 시간 전까지 (정리문서 정책 값 14) */
+  RESCHEDULE_EVENT_CUTOFF_HOURS: 12,
+  /** 방해 금지 시작 시각(밤 몇 시, 한국 시간). 이 시간에는 푸시를 보내지 않고 알림함에만 쌓습니다. (2026-11-08 사용자 확인) */
+  NOTIFY_QUIET_START_HOUR: 22,
+  /** 방해 금지 끝 시각(아침 몇 시, 한국 시간) */
+  NOTIFY_QUIET_END_HOUR: 8,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

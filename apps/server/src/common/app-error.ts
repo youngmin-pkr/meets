@@ -36,7 +36,10 @@ export type AppErrorCode =
   | 'PROPOSAL_INVALID'
   | 'PROPOSAL_TOO_LATE'
   | 'PROPOSAL_EXISTS'
-  | 'PROPOSAL_STATE';
+  | 'PROPOSAL_STATE'
+  | 'APPOINTMENT_STATE'
+  | 'APPOINTMENT_NOT_NOW'
+  | 'APPOINTMENT_OVERLAP';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -73,6 +76,9 @@ const STATUS: Record<AppErrorCode, number> = {
   PROPOSAL_TOO_LATE: 409,
   PROPOSAL_EXISTS: 409,
   PROPOSAL_STATE: 409,
+  APPOINTMENT_STATE: 409,
+  APPOINTMENT_NOT_NOW: 409,
+  APPOINTMENT_OVERLAP: 409,
 };
 
 export class AppError extends Error {

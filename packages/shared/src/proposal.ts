@@ -16,7 +16,7 @@ export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
   CANCELLED: '취소됨',
 };
 
-/** 약속 상태 (정리문서 5장 "약속"). 3-2단계에서는 '확정 대기'로 만들기만 하고, 나머지는 4단계에서 씁니다. */
+/** 약속 상태 (정리문서 5장 "약속"). 전이 표와 시간 규칙은 appointment.ts에 있습니다. */
 export type AppointmentStatus =
   | 'PENDING_CONFIRM' // 확정 대기
   | 'CONFIRMED' // 확정
@@ -88,22 +88,11 @@ export interface ProposalView {
   status: ProposalStatus;
   counterpart: Counterpart;
   event: { id: string; name: string };
-  day: { id: string; date: string };
+  /** 행사 일정이 바뀌어 이 날·장소가 없어지면 id는 null (날짜·이름은 남음) */
+  day: { id: string | null; date: string };
   segments: Array<{ id: string; label: string; startTime: string; endTime: string }>;
-  meetingSpot: { id: string; name: string };
+  meetingSpot: { id: string | null; name: string };
   expiresAt: string;
-  createdAt: string;
-}
-
-/** 약속 (앱이 받는 모양) */
-export interface AppointmentView {
-  id: string;
-  status: AppointmentStatus;
-  counterpart: Counterpart;
-  event: { id: string; name: string };
-  day: { id: string; date: string; startTime: string };
-  segments: Array<{ id: string; label: string; startTime: string; endTime: string }>;
-  meetingSpot: { id: string; name: string };
   createdAt: string;
 }
 

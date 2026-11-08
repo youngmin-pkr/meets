@@ -6,6 +6,26 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  ACTIVE_APPOINTMENT_STATUSES,
+  appointmentActions,
+  appointmentWindow,
+  CANCEL_REASONS,
+  dueAppointmentSteps,
+  factsTimes,
+  formatSeoulShort,
+  freeCancelUntil,
+  notificationText,
+  rangeOf,
+  rangesOverlap,
+  type AppointmentEndReason,
+  type AppointmentFacts,
+  type AppointmentPolicy,
+  type AppointmentStatus,
+  type AppointmentStep,
+  type NotificationKind,
+  type NotificationParams,
+  type NotificationView,
+  type TimeRange,
   proposalExpiresAt,
   type AppointmentView,
   type Counterpart,
@@ -60,6 +80,7 @@ import {
   todayInSeoul,
   type AgreedTerm,
   type AvatarColor,
+  type CancelReason,
   type IdentityResult,
 } from '@meets/shared';
 import { ApiError, type Backend, type Me, type SignupConfig } from './apiTypes';
@@ -152,16 +173,66 @@ interface DemoProposal {
   autoAcceptAt: number | null;
 }
 
+interface DemoParticipant {
+  confirmedAt: Date | null;
+  rescheduleConfirmedAt: Date | null;
+  arrivedAt: Date | null;
+  dayBeforeNotifiedAt: Date | null;
+  reminderNotifiedAt: Date | null;
+  soonNotifiedAt: Date | null;
+  noResponse: boolean;
+  lateCancel: boolean;
+  noShowReportedAt: Date | null;
+}
+
 interface DemoAppointment {
   id: string;
   proposalId: string;
   eventId: string;
-  eventDayId: string;
-  segmentIds: string[];
+  eventDayId: string | null;
+  meetingSpotName: string;
   meetingSpotId: string;
   users: [string, string];
+  status: AppointmentStatus;
+  date: string;
+  startTime: string;
+  endTime: string;
+  segments: Array<{ id: string; label: string; startTime: string; endTime: string }>;
+  policy: AppointmentPolicy;
+  rescheduleDeadline: Date | null;
+  /** 데모 전용: 전날 확인을 바로 열어 둔 예시 약속 */
+  confirmOpensAt: Date | null;
+  endReason: AppointmentEndReason | null;
+  cancelledBy: string | null;
+  cancelReason: CancelReason | null;
+  parts: Record<string, DemoParticipant>;
   createdAt: number;
+  /** 데모 전용: 예시 상대가 '갈 수 있어요'를 누르는 시각 */
+  sampleConfirmAt: number | null;
 }
+
+/** 약속을 만들 때 저장해 두는 정책 값 (데모는 기본값) */
+const DEMO_APPOINTMENT_POLICY: AppointmentPolicy = {
+  dayBeforeHour: POLICY_DEFAULTS.APPOINTMENT_DAY_BEFORE_HOUR,
+  confirmDeadlineHours: POLICY_DEFAULTS.APPOINTMENT_CONFIRM_DEADLINE_HOURS,
+  confirmReminderHours: POLICY_DEFAULTS.APPOINTMENT_CONFIRM_REMINDER_HOURS,
+  freeCancelHours: POLICY_DEFAULTS.APPOINTMENT_FREE_CANCEL_HOURS,
+  noShowWaitMinutes: POLICY_DEFAULTS.APPOINTMENT_NO_SHOW_WAIT_MINUTES,
+  soonMinutes: POLICY_DEFAULTS.APPOINTMENT_SOON_MINUTES,
+  arrivalOpenMinutes: POLICY_DEFAULTS.APPOINTMENT_ARRIVAL_OPEN_MINUTES,
+};
+
+const emptyPart = (): DemoParticipant => ({
+  confirmedAt: null,
+  rescheduleConfirmedAt: null,
+  arrivedAt: null,
+  dayBeforeNotifiedAt: null,
+  reminderNotifiedAt: null,
+  soonNotifiedAt: null,
+  noResponse: false,
+  lateCancel: false,
+  noShowReportedAt: null,
+});
 
 export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs?: number } = {}): Backend {
   const now = options.now ?? (() => new Date());
@@ -224,6 +295,8 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   let ticketSeq = 0;
   const proposals: DemoProposal[] = [];
   const appointments: DemoAppointment[] = [];
+  const notifications: Array<NotificationView & { userId: string }> = [];
+  let notificationSeq = 0;
   /** 데모 전용: 예시 사용자가 이미 제안을 보낸 (사용자|행사) */
   const sampleProposed = new Set<string>();
   let proposalSeq = 0;
@@ -254,29 +327,153 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     );
   }
 
-  /** 만료와 (데모 전용) 예시 사용자의 자동 수락 */
+  /** 만료, 약속 시간 규칙, (데모 전용) 예시 사용자의 자동 수락·자동 확인 */
   function settle() {
     const t = now().getTime();
     for (const p of proposals) {
       if (p.status !== 'SENT') continue;
       if (p.expiresAt.getTime() <= t) p.status = 'EXPIRED';
-      else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) acceptInternal(p);
+      else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) {
+        const { day } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
+        const segs = day.segments.filter((x) => p.segmentIds.includes(x.id));
+        const w = appointmentWindow(day, segs);
+        // 예시 사용자도 시간이 겹치는 약속은 수락하지 않습니다.
+        if (overlapFor(p.senderId, rangeOf(day.date, w.startTime, w.endTime))) p.status = 'REJECTED';
+        else acceptInternal(p);
+      }
+    }
+    for (const a of appointments) {
+      for (const step of dueAppointmentSteps(factsOf(a), now())) applyStep(a, step);
+      // 데모 전용: 예시 상대는 확인 요청이 열리면 몇 초 뒤 '갈 수 있어요'를 누릅니다.
+      for (const u of a.users.filter(isSample)) {
+        if (!appointmentActions(factsOf(a), u, now(), { newScheduleAvailable: false }).confirm) continue;
+        if (a.sampleConfirmAt === null) a.sampleConfirmAt = t + autoAcceptDelayMs;
+        else if (a.sampleConfirmAt <= t) confirmInternal(a, u);
+      }
     }
   }
 
-  function acceptInternal(p: DemoProposal) {
+  function factsOf(a: DemoAppointment): AppointmentFacts {
+    return {
+      status: a.status,
+      date: a.date,
+      startTime: a.startTime,
+      endTime: a.endTime,
+      policy: a.policy,
+      rescheduleDeadline: a.rescheduleDeadline,
+      confirmOpensAt: a.confirmOpensAt,
+      participants: a.users.map((userId) => ({ userId, ...a.parts[userId] })),
+    };
+  }
+
+  /** 알림함 (예시 사용자에게는 쌓지 않습니다) */
+  function notify(userId: string, kind: NotificationKind, params: NotificationParams, target: { appointmentId?: string; proposalId?: string } = {}) {
+    if (isSample(userId)) return;
+    const { title, body } = notificationText(kind, params);
+    notifications.push({
+      id: `demo-notification-${++notificationSeq}`,
+      userId,
+      kind,
+      title,
+      body,
+      createdAt: now().toISOString(),
+      read: false,
+      appointmentId: target.appointmentId ?? null,
+      proposalId: target.proposalId ?? null,
+    });
+  }
+
+  const nicknameOf = (userId: string) => counterpartOf(userId).nickname;
+  const eventName = (eventId: string) => events.find((e) => e.detail.id === eventId)!.detail.name;
+
+  function applyStep(a: DemoAppointment, step: AppointmentStep) {
+    const t = factsTimes(factsOf(a));
+    const base = { eventName: eventName(a.eventId), when: formatSeoulShort(t.startsAt), spotName: a.meetingSpotName, deadline: formatSeoulShort(t.deadline) };
+    const target = { appointmentId: a.id };
+    const once = (ids: string[], field: 'dayBeforeNotifiedAt' | 'reminderNotifiedAt' | 'soonNotifiedAt', kind: NotificationKind) => {
+      for (const u of ids) {
+        if (a.parts[u][field]) continue;
+        a.parts[u][field] = now();
+        notify(u, kind, base, target);
+      }
+    };
+    switch (step.kind) {
+      case 'NOTIFY_DAY_BEFORE':
+        return once(step.userIds, 'dayBeforeNotifiedAt', 'DAY_BEFORE_CONFIRM');
+      case 'NOTIFY_REMINDER':
+        return once(step.userIds, 'reminderNotifiedAt', 'DAY_BEFORE_REMINDER');
+      case 'NOTIFY_SOON':
+        return once(step.userIds, 'soonNotifiedAt', 'APPOINTMENT_SOON');
+      case 'CANCEL_NO_CONFIRM':
+        a.status = 'CANCELLED';
+        a.endReason = 'NO_CONFIRM';
+        for (const u of a.users) {
+          const silent = step.noResponseUserIds.includes(u);
+          a.parts[u].noResponse = silent;
+          notify(u, silent ? 'NO_CONFIRM_SELF' : 'NO_CONFIRM_PARTNER', base, target);
+        }
+        return;
+      case 'START':
+        a.status = 'IN_PROGRESS';
+        return;
+      case 'END':
+        a.status = 'ENDED';
+        return;
+      case 'HOLD':
+        a.status = 'ON_HOLD';
+        for (const u of a.users) notify(u, 'APPOINTMENT_ON_HOLD', base, target);
+        return;
+    }
+  }
+
+  function confirmInternal(a: DemoAppointment, userId: string) {
+    a.parts[userId].confirmedAt = now();
+    if (a.users.every((u) => a.parts[u].confirmedAt)) {
+      a.status = 'CONFIRMED';
+      const other = a.users.find((u) => u !== userId)!;
+      notify(other, 'APPOINTMENT_CONFIRMED', { nickname: nicknameOf(userId), when: formatSeoulShort(factsTimes(factsOf(a)).startsAt), spotName: a.meetingSpotName }, { appointmentId: a.id });
+    }
+  }
+
+  /** 이 사람의 진행 중인 약속 중 시간이 겹치는 것 */
+  function overlapFor(userId: string, range: TimeRange, excludeId?: string) {
+    return appointments.find(
+      (a) =>
+        a.id !== excludeId &&
+        a.users.includes(userId) &&
+        ACTIVE_APPOINTMENT_STATUSES.includes(a.status) &&
+        rangesOverlap(rangeOf(a.date, a.startTime, a.endTime), range),
+    );
+  }
+
+  function acceptInternal(p: DemoProposal, options: { confirmOpensAt?: Date } = {}) {
     p.status = 'ACCEPTED';
+    const { day, spot } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
+    const segments = day.segments.filter((x) => p.segmentIds.includes(x.id));
     const a: DemoAppointment = {
       id: `demo-appointment-${appointments.length + 1}`,
       proposalId: p.id,
       eventId: p.eventId,
       eventDayId: p.eventDayId,
-      segmentIds: p.segmentIds,
-      meetingSpotId: p.meetingSpotId,
+      meetingSpotId: spot.id,
+      meetingSpotName: spot.name,
       users: [p.senderId, p.receiverId],
+      status: 'PENDING_CONFIRM',
+      date: day.date,
+      ...appointmentWindow(day, segments),
+      segments,
+      policy: DEMO_APPOINTMENT_POLICY,
+      rescheduleDeadline: null,
+      confirmOpensAt: options.confirmOpensAt ?? null,
+      endReason: null,
+      cancelledBy: null,
+      cancelReason: null,
+      parts: { [p.senderId]: emptyPart(), [p.receiverId]: emptyPart() },
       createdAt: now().getTime(),
+      sampleConfirmAt: null,
     };
     appointments.push(a);
+    notify(p.senderId, 'PROPOSAL_ACCEPTED', { nickname: nicknameOf(p.receiverId), eventName: eventName(p.eventId) }, { appointmentId: a.id });
     return a;
   }
 
@@ -305,17 +502,80 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   }
 
   function appointmentView(a: DemoAppointment, me: string): AppointmentView {
-    const { ev, day, spot } = dayAndSpot(a.eventId, a.eventDayId, a.meetingSpotId);
+    const f = factsOf(a);
+    const t = factsTimes(f);
+    const other = a.users.find((u) => u !== me)!;
+    const mine = a.parts[me];
+    const theirs = a.parts[other];
+    const actions = appointmentActions(f, me, now(), { newScheduleAvailable: false });
+    const byMe =
+      a.endReason === 'CANCELLED' ? a.cancelledBy === me : a.endReason === 'NO_CONFIRM' ? mine.noResponse : a.endReason === 'NO_SHOW' ? !!mine.noShowReportedAt : false;
     return {
       id: a.id,
-      status: 'PENDING_CONFIRM',
-      counterpart: counterpartOf(a.users.find((u) => u !== me)!),
-      event: { id: ev.id, name: ev.name },
-      day: { id: day.id, date: day.date, startTime: day.startTime },
-      segments: day.segments.filter((x) => a.segmentIds.includes(x.id)),
-      meetingSpot: { id: spot.id, name: spot.name },
+      status: a.status,
+      counterpart: counterpartOf(other),
+      event: { id: a.eventId, name: eventName(a.eventId) },
+      day: { id: a.eventDayId, date: a.date, startTime: a.startTime },
+      segments: a.segments,
+      meetingSpot: { id: a.meetingSpotId, name: a.meetingSpotName },
       createdAt: new Date(a.createdAt).toISOString(),
+      startsAt: t.startsAt.toISOString(),
+      endsAt: t.endsAt.toISOString(),
+      confirm: { opensAt: t.opensAt.toISOString(), deadline: t.deadline.toISOString(), mine: !!mine.confirmedAt, theirs: !!theirs.confirmedAt },
+      arrival: { mine: mine.arrivedAt?.toISOString() ?? null, theirs: theirs.arrivedAt?.toISOString() ?? null },
+      freeCancelUntil: freeCancelUntil(a.date, a.startTime, a.policy).toISOString(),
+      reschedule: null,
+      end: a.endReason
+        ? {
+            reason: a.endReason,
+            byMe,
+            cancelReason: a.cancelReason ? CANCEL_REASONS[a.cancelReason] : null,
+            late: a.endReason === 'CANCELLED' && a.cancelledBy === me && mine.lateCancel,
+          }
+        : null,
+      actions,
+      needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
     };
+  }
+
+  /** 내 약속 하나 (약속에 없는 사람에게는 '찾을 수 없어요') */
+  function myAppointment(id: string) {
+    const user = currentUser();
+    settle();
+    const a = appointments.find((x) => x.id === id && x.users.includes(user.id));
+    if (!a) throw new ApiError('NOT_FOUND', '약속을 찾을 수 없어요.');
+    return { user, a };
+  }
+
+  /**
+   * 데모 전용: 가입을 마치면 '내일 약속'을 하나 넣어 둡니다. 전날 확인을 바로 해 볼 수 있도록 확인 요청을 지금 열어 두고,
+   * 예시 상대(하늘)는 이미 '갈 수 있어요'를 누른 상태입니다.
+   */
+  function seedTomorrowAppointment(userId: string) {
+    const index = events.length - 1; // 내일 열리는 '생일 카페'
+    const ev = events[index].detail;
+    const day = ev.days[0];
+    const seg = day.segments[day.segments.length - 1];
+    const spot = ev.meetingSpots[0];
+    const sky = `demo-sample-${SAMPLE_PEOPLE[0].key}`;
+    if (!day || !seg || !spot) return;
+    const p: DemoProposal = {
+      id: `demo-proposal-${++proposalSeq}`,
+      senderId: sky,
+      receiverId: userId,
+      eventId: ev.id,
+      eventDayId: day.id,
+      segmentIds: [seg.id],
+      meetingSpotId: spot.id,
+      status: 'SENT',
+      expiresAt: now(),
+      createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
+      autoAcceptAt: null,
+    };
+    proposals.push(p);
+    const a = acceptInternal(p, { confirmOpensAt: now() });
+    a.parts[sky].confirmedAt = now();
+    a.parts[sky].dayBeforeNotifiedAt = now();
   }
 
   function newProposal(senderId: string, receiverId: string, eventId: string, eventDayId: string, segmentIds: string[], meetingSpotId: string): DemoProposal {
@@ -339,6 +599,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       autoAcceptAt: isSample(receiverId) ? now().getTime() + autoAcceptDelayMs : null,
     };
     proposals.push(p);
+    notify(receiverId, 'PROPOSAL_RECEIVED', { nickname: nicknameOf(senderId), eventName: eventName(eventId), deadline: formatSeoulShort(expiresAt) }, { proposalId: p.id });
     return p;
   }
 
@@ -565,6 +826,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         throw new ApiError('NOTIFICATION_ALREADY_ASKED', '알림 설정은 이미 골랐어요.');
       }
       user.notificationChoice = granted ? 'ALLOWED' : 'DENIED';
+      if (!user.signupDone) seedTomorrowAppointment(user.id);
       user.signupDone = true;
       return delay(toMe(user));
     },
@@ -816,8 +1078,16 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (pending) {
         throw new ApiError('PROPOSAL_EXISTS', pending.senderId === user.id ? '이미 보낸 제안이 있어요.' : '상대가 보낸 제안이 와 있어요. 받은 제안에서 답해 주세요.');
       }
-      if (appointments.some((a) => a.eventDayId === input.eventDayId && a.users.includes(user.id) && a.users.includes(input.receiverId))) {
+      if (
+        appointments.some(
+          (a) => a.eventDayId === input.eventDayId && a.users.includes(user.id) && a.users.includes(input.receiverId) && a.status !== 'CANCELLED' && a.status !== 'AUTO_ENDED',
+        )
+      ) {
         throw new ApiError('PROPOSAL_EXISTS', '이 날 이미 약속이 있어요.');
+      }
+      const w = appointmentWindow(day, day.segments.filter((x) => segs.includes(x.id)));
+      if (overlapFor(user.id, rangeOf(day.date, w.startTime, w.endTime))) {
+        throw new ApiError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
       }
       const p = newProposal(user.id, input.receiverId, eventId, input.eventDayId, segs, input.meetingSpotId);
       return delay(proposalView(p, user.id));
@@ -846,6 +1116,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!ov || !p.segmentIds.every((x) => ov.segmentIds.includes(x))) {
         throw new ApiError('PROPOSAL_INVALID', '그사이 일정이나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
       }
+      const { day } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
+      const w = appointmentWindow(day, day.segments.filter((x) => p.segmentIds.includes(x.id)));
+      const range = rangeOf(day.date, w.startTime, w.endTime);
+      if (overlapFor(user.id, range)) throw new ApiError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+      if (overlapFor(p.senderId, range)) throw new ApiError('APPOINTMENT_OVERLAP', '상대에게 그 시간에 다른 약속이 생겨서 지금은 수락할 수 없어요.');
       return delay(appointmentView(acceptInternal(p), user.id));
     },
 
@@ -856,6 +1131,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
       if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
       p.status = 'REJECTED';
+      notify(p.senderId, 'PROPOSAL_REJECTED', { nickname: nicknameOf(user.id), eventName: eventName(p.eventId) }, { proposalId: p.id });
       return delay({ id, status: 'REJECTED' });
     },
 
@@ -875,9 +1151,88 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       return delay(
         appointments
           .filter((a) => a.users.includes(user.id))
-          .sort((a, b) => b.createdAt - a.createdAt)
+          .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime))
           .map((a) => appointmentView(a, user.id)),
       );
+    },
+
+    async getAppointment(id) {
+      const { user, a } = myAppointment(id);
+      return delay(appointmentView(a, user.id));
+    },
+
+    async confirmAppointment(id) {
+      const { user, a } = myAppointment(id);
+      const f = factsOf(a);
+      if (a.status !== 'PENDING_CONFIRM') throw new ApiError('APPOINTMENT_STATE', '지금은 확인할 수 없는 약속이에요.');
+      if (!appointmentActions(f, user.id, now(), { newScheduleAvailable: false }).confirm) {
+        const t = factsTimes(f);
+        throw new ApiError(
+          'APPOINTMENT_NOT_NOW',
+          a.parts[user.id].confirmedAt ? '이미 확인했어요.' : now() < t.opensAt ? `${formatSeoulShort(t.opensAt)}부터 확인할 수 있어요.` : '확인 마감이 지났어요.',
+        );
+      }
+      confirmInternal(a, user.id);
+      return delay(appointmentView(a, user.id));
+    },
+
+    async cancelAppointment(id, reason) {
+      const { user, a } = myAppointment(id);
+      if (!appointmentActions(factsOf(a), user.id, now(), { newScheduleAvailable: false }).cancel) {
+        throw new ApiError('APPOINTMENT_STATE', '지금은 취소할 수 없는 약속이에요.');
+      }
+      a.status = 'CANCELLED';
+      a.endReason = 'CANCELLED';
+      a.cancelledBy = user.id;
+      a.cancelReason = reason ?? null;
+      a.parts[user.id].lateCancel = now() >= freeCancelUntil(a.date, a.startTime, a.policy);
+      const other = a.users.find((u) => u !== user.id)!;
+      notify(other, 'APPOINTMENT_CANCELLED', { nickname: nicknameOf(user.id), eventName: eventName(a.eventId), reason: reason ? CANCEL_REASONS[reason] : null }, { appointmentId: a.id });
+      return delay(appointmentView(a, user.id));
+    },
+
+    async arriveAppointment(id) {
+      const { user, a } = myAppointment(id);
+      if (!appointmentActions(factsOf(a), user.id, now(), { newScheduleAvailable: false }).arrive) {
+        throw new ApiError('APPOINTMENT_NOT_NOW', '약속 시간이 가까워지면 누를 수 있어요.');
+      }
+      a.parts[user.id].arrivedAt = now();
+      notify(a.users.find((u) => u !== user.id)!, 'PARTNER_ARRIVED', { nickname: nicknameOf(user.id), spotName: a.meetingSpotName }, { appointmentId: a.id });
+      return delay(appointmentView(a, user.id));
+    },
+
+    async reportNoShow(id) {
+      const { user, a } = myAppointment(id);
+      if (!appointmentActions(factsOf(a), user.id, now(), { newScheduleAvailable: false }).reportNoShow) {
+        throw new ApiError('APPOINTMENT_NOT_NOW', "지금은 '안 나왔어요'를 누를 수 없어요.");
+      }
+      a.status = 'ENDED_EARLY';
+      a.endReason = 'NO_SHOW';
+      a.parts[user.id].noShowReportedAt = now();
+      notify(a.users.find((u) => u !== user.id)!, 'APPOINTMENT_ENDED_EARLY', { eventName: eventName(a.eventId) }, { appointmentId: a.id });
+      return delay(appointmentView(a, user.id));
+    },
+
+    async listNotifications() {
+      const user = currentUser();
+      settle();
+      const mine = notifications.filter((n) => n.userId === user.id).reverse();
+      return delay({ items: mine.slice(0, 50).map(({ userId: _u, ...n }) => n), unread: mine.filter((n) => !n.read).length });
+    },
+
+    async markNotificationsRead() {
+      const user = currentUser();
+      for (const n of notifications) if (n.userId === user.id) n.read = true;
+      return delay({ unread: 0 });
+    },
+
+    async getHomeSummary() {
+      const user = currentUser();
+      settle();
+      return delay({
+        unreadNotifications: notifications.filter((n) => n.userId === user.id && !n.read).length,
+        hasVerifiedTicket: [...tickets.values()].some((t) => t.userId === user.id && t.status === 'VERIFIED'),
+      });
     },
   };
 }

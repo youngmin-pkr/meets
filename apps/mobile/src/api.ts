@@ -8,6 +8,7 @@
  */
 import type {
   AppointmentView,
+  NotificationView,
   ProposalView,
   MyTicketStatus,
   TicketConfirmResult,
@@ -20,10 +21,10 @@ import type {
   IdentityResult,
   PreferenceView,
 } from '@meets/shared';
-import { ApiError, type Backend, type Me, type SignupConfig } from './apiTypes';
+import { ApiError, type Backend, type HomeSummary, type Me, type SignupConfig } from './apiTypes';
 import { createDemoBackend } from './demoBackend';
 
-export { ApiError, type Me, type SignupConfig } from './apiTypes';
+export { ApiError, type HomeSummary, type Me, type SignupConfig } from './apiTypes';
 
 export const IS_DEMO = process.env.EXPO_PUBLIC_DEMO_MODE === '1';
 
@@ -108,6 +109,14 @@ function createHttpBackend(baseUrl: string): Backend {
     rejectProposal: (id) => call<{ id: string; status: string }>('POST', `/proposals/${encodeURIComponent(id)}/reject`),
     cancelProposal: (id) => call<{ id: string; status: string }>('POST', `/proposals/${encodeURIComponent(id)}/cancel`),
     listAppointments: () => call<AppointmentView[]>('GET', '/me/appointments'),
+    getAppointment: (id) => call<AppointmentView>('GET', `/appointments/${encodeURIComponent(id)}`),
+    confirmAppointment: (id) => call<AppointmentView>('POST', `/appointments/${encodeURIComponent(id)}/confirm`),
+    cancelAppointment: (id, reason) => call<AppointmentView>('POST', `/appointments/${encodeURIComponent(id)}/cancel`, reason ? { reason } : {}),
+    arriveAppointment: (id) => call<AppointmentView>('POST', `/appointments/${encodeURIComponent(id)}/arrive`),
+    reportNoShow: (id) => call<AppointmentView>('POST', `/appointments/${encodeURIComponent(id)}/no-show`),
+    listNotifications: () => call<{ items: NotificationView[]; unread: number }>('GET', '/me/notifications'),
+    markNotificationsRead: () => call<{ unread: number }>('POST', '/me/notifications/read'),
+    getHomeSummary: () => call<HomeSummary>('GET', '/me/home'),
   };
 }
 

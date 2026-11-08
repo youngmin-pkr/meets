@@ -102,6 +102,26 @@ export function sampleEvents(today: CalendarDate): SampleEvent[] {
         { name: '푸드트럭 존', isPublicPlace: true },
       ],
     },
+    {
+      // 내일 열리는 행사. 데모에서 '전날 확인'을 바로 해 볼 수 있도록 예시 약속이 이 행사로 잡혀 있습니다.
+      name: '테스트 아티스트 생일 카페',
+      type: 'POPUP',
+      venue: '테스트 카페 거리',
+      officialUrl: 'https://example.com/test-artist-birthday-cafe',
+      ticketRequired: false,
+      days: [
+        {
+          date: addDays(today, 1),
+          startTime: '11:00',
+          endTime: '20:00',
+          segments: [
+            { label: '오전 입장', startTime: '11:00', endTime: '14:00' },
+            { label: '오후 입장', startTime: '14:00', endTime: '18:00' },
+          ],
+        },
+      ],
+      meetingSpots: [{ name: '테스트 카페 거리 입구 안내판', isPublicPlace: true }],
+    },
   ];
 }
 

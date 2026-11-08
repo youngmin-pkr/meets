@@ -1,5 +1,9 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { AccountStateService } from './account-state/account-state.service';
+import { AppointmentStateService } from './appointments/appointment-state.service';
+import { AppointmentsController } from './appointments/appointments.controller';
+import { AppointmentsService } from './appointments/appointments.service';
+import { NotificationsService } from './notifications/notifications.service';
 import { AdminAuthService, AdminGuard } from './admin/admin-auth';
 import { AdminController } from './admin/admin.controller';
 import { AuditService } from './admin/audit.service';
@@ -32,7 +36,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -59,6 +63,9 @@ export class AppModule {
         AdminTicketsService,
         ProposalStateService,
         ProposalsService,
+        NotificationsService,
+        AppointmentStateService,
+        AppointmentsService,
       ],
     };
   }
