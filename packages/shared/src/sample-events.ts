@@ -104,3 +104,91 @@ export function sampleEvents(today: CalendarDate): SampleEvent[] {
     },
   ];
 }
+
+/**
+ * 개발·데모용 예시 사용자 (모두 지어낸 별명). sampleEvents()의 순서(index)를 기준으로 일정을 정합니다.
+ * plans: [행사 index, 고를 날 index 목록, 도착, 귀가, 같이할 구간 index 목록]
+ */
+export interface SamplePerson {
+  key: string;
+  nickname: string;
+  avatarColor: 'ink' | 'red' | 'gray' | 'green';
+  gender: 'M' | 'F';
+  age: number;
+  tempoAnswers: [1 | 2 | 3, 1 | 2 | 3, 1 | 2 | 3];
+  immersionAnswers: [1 | 2 | 3, 1 | 2 | 3, 1 | 2 | 3];
+  mustGender: 'ANY' | 'SAME';
+  mustAge: 'ANY' | 'WITHIN_3' | 'WITHIN_5';
+  promises: Array<'PUNCTUAL' | 'PHOTO_CONSENT' | 'NO_ALCOHOL_SMOKING' | 'IN_APP_CONTACT_ONLY'>;
+  /** 샘플 팬덤 이름 중 고른 것 */
+  fandoms: string[];
+  fandomPublic: boolean;
+  plans: Array<{ event: number; days: number[]; arrive: string; leave: string; together: number[] }>;
+}
+
+export const SAMPLE_PEOPLE: SamplePerson[] = [
+  {
+    key: 'sky', nickname: '하늘', avatarColor: 'ink', gender: 'F', age: 26,
+    tempoAnswers: [2, 1, 2], immersionAnswers: [2, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드'], fandomPublic: true,
+    plans: [
+      { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2] },
+      { event: 3, days: [0, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
+    ],
+  },
+  {
+    key: 'jiwoo', nickname: '지우', avatarColor: 'green', gender: 'F', age: 24,
+    tempoAnswers: [2, 2, 2], immersionAnswers: [3, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT'], fandoms: [], fandomPublic: false,
+    plans: [
+      { event: 0, days: [0], arrive: '17:00', leave: '21:00', together: [1, 2] },
+      { event: 1, days: [0, 1], arrive: '10:30', leave: '17:00', together: [0, 1] },
+    ],
+  },
+  {
+    key: 'mint', nickname: '민트', avatarColor: 'red', gender: 'M', age: 29,
+    tempoAnswers: [3, 2, 2], immersionAnswers: [1, 2, 1], mustGender: 'ANY', mustAge: 'ANY',
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'NO_ALCOHOL_SMOKING', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드', '테스트 페스티벌'], fandomPublic: false,
+    plans: [
+      { event: 0, days: [0], arrive: '15:00', leave: '18:00', together: [0, 1] },
+      { event: 3, days: [0, 1, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
+    ],
+  },
+  {
+    key: 'dal', nickname: '달빛', avatarColor: 'gray', gender: 'F', age: 31,
+    tempoAnswers: [1, 1, 1], immersionAnswers: [2, 3, 2], mustGender: 'SAME', mustAge: 'WITHIN_5',
+    promises: ['PUNCTUAL'], fandoms: ['테스트 전시 시리즈'], fandomPublic: true,
+    plans: [
+      { event: 2, days: [0, 1], arrive: '10:00', leave: '16:00', together: [0] },
+      { event: 1, days: [2], arrive: '13:00', leave: '20:00', together: [1] },
+    ],
+  },
+  {
+    key: 'bom', nickname: '봄비', avatarColor: 'green', gender: 'M', age: 23,
+    tempoAnswers: [3, 3, 3], immersionAnswers: [3, 1, 3], mustGender: 'ANY', mustAge: 'WITHIN_5',
+    promises: [], fandoms: ['테스트 페스티벌'], fandomPublic: true,
+    plans: [
+      { event: 3, days: [0, 1, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
+      { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2] },
+    ],
+  },
+  {
+    key: 'nuri', nickname: '누리', avatarColor: 'ink', gender: 'F', age: 27,
+    tempoAnswers: [2, 2, 3], immersionAnswers: [2, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT'], fandoms: ['테스트 아티스트 A'], fandomPublic: false,
+    plans: [
+      { event: 1, days: [0], arrive: '10:30', leave: '20:00', together: [0, 1] },
+      { event: 2, days: [0], arrive: '10:00', leave: '19:00', together: [0] },
+      { event: 0, days: [0], arrive: '16:00', leave: '21:00', together: [2] },
+    ],
+  },
+  {
+    key: 'seol', nickname: '설레임', avatarColor: 'red', gender: 'F', age: 25,
+    tempoAnswers: [2, 3, 2], immersionAnswers: [2, 3, 1], mustGender: 'ANY', mustAge: 'ANY',
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'IN_APP_CONTACT_ONLY'], fandoms: [], fandomPublic: false,
+    plans: [
+      { event: 2, days: [1, 2], arrive: '10:00', leave: '19:00', together: [0] },
+      { event: 3, days: [1], arrive: '12:00', leave: '20:00', together: [0] },
+    ],
+  },
+];

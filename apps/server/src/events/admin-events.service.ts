@@ -135,7 +135,10 @@ export class AdminEventsService {
           // 표에 따라 '등록 → 변경됨' 또는 '변경됨 → 변경됨'
           await this.eventState.transition(tx, id, current.status, 'CHANGED');
         }
-        await tx.eventDay.deleteMany({ where: { eventId: id } });
+        // 일정이 그대로면 날짜·구간은 건드리지 않습니다. (사용자가 고른 날·구간이 지워지지 않도록)
+        const replaceDays = scheduleChanged || current.days.length === 0;
+        const nested = this.nestedWrites(input);
+        if (replaceDays) await tx.eventDay.deleteMany({ where: { eventId: id } });
         await tx.meetingSpot.deleteMany({ where: { eventId: id } });
         await tx.event.update({
           where: { id },
@@ -147,7 +150,8 @@ export class AdminEventsService {
             officialUrl: input.officialUrl.trim(),
             officialUrlKey: urlKey,
             ticketRequired: input.ticketRequired,
-            ...this.nestedWrites(input),
+            meetingSpots: nested.meetingSpots,
+            ...(replaceDays ? { days: nested.days } : {}),
           },
         });
         await this.audit.record(

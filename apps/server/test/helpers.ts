@@ -27,7 +27,7 @@ export async function startApp(clock: Clock = new TestClock(), logger?: false) {
 export async function resetDb(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
+    'TRUNCATE "WaitRegistration","PreferenceDay","Preference","AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
   );
 }
 
@@ -36,7 +36,7 @@ export function http(app: INestApplication) {
 }
 
 /** 테스트용 본인 확인 토큰 */
-export const fakeToken = (person: string, birth: string) => `fake:${person}:${birth}`;
+export const fakeToken = (person: string, birth: string, gender: 'M' | 'F' = 'F') => `fake:${person}:${birth}:${gender}`;
 
 /** 성인으로 가입하고 로그인 토큰을 돌려줍니다. */
 export async function signUpAdult(app: INestApplication, person = 'adult1') {

@@ -23,7 +23,10 @@ export type AppErrorCode =
   | 'EVENT_CLOSED'
   | 'CONFIRM_REQUIRED'
   | 'EVENT_REPORT_INVALID'
-  | 'APPROVAL_INVALID';
+  | 'APPROVAL_INVALID'
+  | 'PREFERENCE_INVALID'
+  | 'PREFERENCE_REQUIRED'
+  | 'WAIT_TOO_LATE';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -47,6 +50,9 @@ const STATUS: Record<AppErrorCode, number> = {
   CONFIRM_REQUIRED: 409,
   EVENT_REPORT_INVALID: 400,
   APPROVAL_INVALID: 409,
+  PREFERENCE_INVALID: 400,
+  PREFERENCE_REQUIRED: 409,
+  WAIT_TOO_LATE: 409,
 };
 
 export class AppError extends Error {

@@ -186,3 +186,61 @@ describe('데모: 행사 선택과 제보', () => {
     ).rejects.toMatchObject({ code: 'EVENT_REPORT_INVALID', detail: { problem: 'OFFICIAL_URL_INVALID' } });
   });
 });
+
+describe('데모: 입력 흐름과 후보', () => {
+  async function ready(person = 'viewer', gender: 'M' | 'F' = 'F') {
+    const backend = createDemoBackend({ now: NOW });
+    const r = await backend.verifyIdentity(`fake:${person}:2000-01-01:${gender}`, ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모보기', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const [concert] = await backend.listEvents({});
+    return { backend, event: await backend.getEvent(concert.id) };
+  }
+  const input = (event: Awaited<ReturnType<typeof ready>>['event'], must = { gender: 'ANY' as const, age: 'ANY' as const, promises: [] as never[] }) => ({
+    days: [{ eventDayId: event.days[0].id, arriveTime: event.days[0].startTime, leaveTime: event.days[0].endTime, togetherSegmentIds: event.days[0].segments.map((s) => s.id) }],
+    tempoAnswers: [2, 2, 2] as Array<1 | 2 | 3>,
+    immersionAnswers: [2, 2, 2] as Array<1 | 2 | 3>,
+    must,
+  });
+
+  test('입력 전에는 후보를 볼 수 없다', async () => {
+    const { backend, event } = await ready();
+    await expect(backend.getCandidates(event.id, {})).rejects.toMatchObject({ code: 'PREFERENCE_REQUIRED' });
+  });
+
+  test('입력하면 예시 사용자 중 조건이 맞는 사람이 후보로 나온다', async () => {
+    const { backend, event } = await ready();
+    const saved = await backend.savePreference(event.id, input(event));
+    expect(saved).toMatchObject({ tempoLevel: 2, immersionLevel: 2 });
+    const r = await backend.getCandidates(event.id, {});
+    expect(r.total).toBeGreaterThan(0);
+    expect(r.candidates[0]).toMatchObject({ nickname: expect.any(String), summary: expect.any(String) });
+    const detail = await backend.getCandidate(event.id, r.candidates[0].userId);
+    expect(detail.reasons.tempo).toBeTruthy();
+  });
+
+  test('같은 성별만 고르면 남성 예시 사용자는 빠진다', async () => {
+    const { backend, event } = await ready('f1', 'F');
+    await backend.savePreference(event.id, input(event, { gender: 'SAME' as never, age: 'ANY' as never, promises: [] }));
+    const r = await backend.getCandidates(event.id, { shortTime: true, immersionPlus: true });
+    expect(r.candidates.map((c) => c.nickname)).not.toContain('민트');
+  });
+
+  test('잘못된 입력은 거절', async () => {
+    const { backend, event } = await ready();
+    await expect(backend.savePreference(event.id, { ...input(event), days: [] })).rejects.toMatchObject({
+      code: 'PREFERENCE_INVALID',
+    });
+  });
+
+  test('알림 신청은 행사 3일 전까지', async () => {
+    const { backend, event } = await ready();
+    await backend.savePreference(event.id, input(event));
+    const r = await backend.registerWait(event.id, true);
+    expect(r.includeImmersionPlus).toBe(true);
+    expect(r.endsOn < event.days[0].date).toBe(true);
+  });
+});

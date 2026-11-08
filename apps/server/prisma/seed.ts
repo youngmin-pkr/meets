@@ -2,7 +2,18 @@
  * 개발용 데이터 채우기: 팬덤 목록과 예시 행사.
  * 실제 팬덤·행사는 운영팀이 정합니다. 여기 이름은 모두 시험용입니다.
  */
-import { EVENT_TYPE_CATEGORY, officialUrlKey, sampleEvents, todayInSeoul } from '@meets/shared';
+import { createHmac } from 'node:crypto';
+import {
+  avatarInitial,
+  EVENT_TYPE_CATEGORY,
+  immersionLevel,
+  nicknameKey,
+  officialUrlKey,
+  SAMPLE_PEOPLE,
+  sampleEvents,
+  tempoLevel,
+  todayInSeoul,
+} from '@meets/shared';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client';
 
@@ -49,8 +60,68 @@ async function main() {
     });
     created++;
   }
+  // 예시 사용자: 가입을 마친 상태로, 예시 행사에 일정·스타일을 입력해 둡니다.
+  const today = todayInSeoul();
+  const samples = sampleEvents(today);
+  const secret = process.env.CI_HASH_SECRET ?? 'dev';
+  let people = 0;
+  for (const p of SAMPLE_PEOPLE) {
+    const ciHash = createHmac('sha256', secret).update(`SAMPLE-CI-${p.key}`).digest('hex');
+    if (await prisma.identityVerification.findUnique({ where: { ciHash } })) continue;
+    const birthDate = `${today.year - p.age - 1}-${String(today.month).padStart(2, '0')}-01`;
+    const fandoms = await prisma.fandom.findMany({ where: { name: { in: p.fandoms } } });
+    const now = new Date();
+    const user = await prisma.user.create({
+      data: {
+        nickname: p.nickname,
+        nicknameKey: nicknameKey(p.nickname),
+        avatarInitial: avatarInitial(p.nickname),
+        avatarColor: p.avatarColor,
+        ageClass: 'ADULT',
+        fandomPublic: p.fandomPublic,
+        profileCompletedAt: now,
+        fandomStepCompletedAt: now,
+        notificationChoice: 'DENIED',
+        signupCompletedAt: now,
+        identity: { create: { ciHash, provider: 'sample', birthDate, gender: p.gender } },
+        fandoms: { create: fandoms.map((f) => ({ fandomId: f.id })) },
+      },
+    });
+    for (const plan of p.plans) {
+      const sample = samples[plan.event];
+      const event = await prisma.event.findUnique({
+        where: { officialUrlKey: officialUrlKey(sample.officialUrl)! },
+        include: { days: { orderBy: { date: 'asc' }, include: { segments: { orderBy: { sortOrder: 'asc' } } } } },
+      });
+      if (!event) continue;
+      await prisma.preference.create({
+        data: {
+          userId: user.id,
+          eventId: event.id,
+          tempoAnswers: p.tempoAnswers,
+          immersionAnswers: p.immersionAnswers,
+          tempoLevel: tempoLevel(p.tempoAnswers),
+          immersionLevel: immersionLevel(p.immersionAnswers, event.category),
+          mustGender: p.mustGender,
+          mustAge: p.mustAge,
+          promises: p.promises,
+          days: {
+            create: plan.days
+              .filter((i) => event.days[i])
+              .map((i) => ({
+                eventDayId: event.days[i].id,
+                arriveTime: plan.arrive,
+                leaveTime: plan.leave,
+                togetherSegmentIds: plan.together.map((j) => event.days[i].segments[j]?.id).filter((x): x is string => !!x),
+              })),
+          },
+        },
+      });
+    }
+    people++;
+  }
   await prisma.$disconnect();
-  console.log(`팬덤 ${SAMPLE_FANDOMS.length}개, 예시 행사 ${created}개를 넣었습니다.`);
+  console.log(`팬덤 ${SAMPLE_FANDOMS.length}개, 예시 행사 ${created}개, 예시 사용자 ${people}명을 넣었습니다.`);
 }
 
 main().catch((error: Error) => {

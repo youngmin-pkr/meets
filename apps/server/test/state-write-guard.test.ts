@@ -3,6 +3,7 @@
  * - 계정(ageClass·status): src/account-state/
  * - 행사(status): src/events/event-state.service.ts
  * 다른 파일에서 상태 값을 직접 저장하려 하면 이 테스트가 실패합니다.
+ * 조회 조건은 { equals: 'ACTIVE' }, { in: [...] }처럼 써서 저장과 구별합니다.
  */
 import fs from 'node:fs';
 import path from 'node:path';

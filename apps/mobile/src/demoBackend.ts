@@ -6,6 +6,24 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  checkPreference,
+  describeCandidate,
+  expectedCounts,
+  explainMatch,
+  immersionLevel,
+  matchCandidates,
+  PREFERENCE_PROBLEM_MESSAGES,
+  PROMISE_SHORT_LABELS,
+  SAMPLE_PEOPLE,
+  tempoLevel,
+  type CalendarDate,
+  type CandidateCard,
+  type MatchCandidate,
+  type MatchDay,
+  type MatchPolicy,
+  type MatchProfile,
+  type PreferenceInput,
+  type PreferenceView,
   checkEventReport,
   EVENT_REPORT_PROBLEM_MESSAGES,
   EVENT_TYPE_CATEGORY,
@@ -37,6 +55,8 @@ import { ApiError, type Backend, type Me, type SignupConfig } from './apiTypes';
 interface DemoUser {
   id: string;
   person: string;
+  birth: CalendarDate;
+  gender: 'M' | 'F' | null;
   nickname: string | null;
   avatarColor: string | null;
   fandomIds: string[];
@@ -145,6 +165,114 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
     return token;
   }
 
+  const POLICY: MatchPolicy = {
+    tempoMaxGap: POLICY_DEFAULTS.MATCH_TEMPO_MAX_GAP,
+    immersionMaxGap: POLICY_DEFAULTS.MATCH_IMMERSION_MAX_GAP,
+    immersionRelaxedGap: POLICY_DEFAULTS.MATCH_IMMERSION_RELAXED_GAP,
+    fewCandidates: POLICY_DEFAULTS.MATCH_FEW_CANDIDATES,
+    minOverlapMinutes: POLICY_DEFAULTS.MATCH_MIN_OVERLAP_MINUTES,
+    shortOverlapMinutes: POLICY_DEFAULTS.MATCH_SHORT_OVERLAP_MINUTES,
+  };
+  /** 사용자 id|행사 id → 입력 흐름 결과 */
+  const preferences = new Map<string, PreferenceView>();
+  const waits = new Map<string, { endsOn: string; includeImmersionPlus: boolean }>();
+  const fandomIdByName = new Map(DEMO_FANDOMS.map((f) => [f.name, f.id]));
+
+  /** 데모 행사 (사용자에게 보이는 것만) */
+  function visibleEvent(eventId: string) {
+    const found = events.find((e) => e.detail.id === eventId && e.status === 'REGISTERED');
+    if (!found) throw new ApiError('NOT_FOUND', '행사를 찾을 수 없어요.');
+    const days: MatchDay[] = found.detail.days.map((d) => ({ ...d, segments: d.segments.map((x) => ({ ...x })) }));
+    return { event: found.detail, days };
+  }
+
+  /** 예시 사용자 정보 (카드에 보여 줄 것) */
+  const people = new Map(
+    SAMPLE_PEOPLE.map((p) => [
+      `demo-sample-${p.key}`,
+      {
+        nickname: p.nickname,
+        avatarInitial: avatarInitial(p.nickname),
+        avatarColor: AVATAR_COLORS[p.avatarColor],
+        fandomPublic: p.fandomPublic,
+        fandoms: p.fandoms,
+      },
+    ]),
+  );
+
+  /** 이 행사의 매칭 정보: 예시 사용자 + 이 데모에서 입력을 마친 사용자 */
+  function profiles(eventId: string): MatchProfile[] {
+    const index = events.findIndex((e) => e.detail.id === eventId);
+    const event = events[index].detail;
+    const today = todayInSeoul(now());
+    const samples: MatchProfile[] = SAMPLE_PEOPLE.flatMap((p) =>
+      p.plans
+        .filter((plan) => plan.event === index)
+        .map((plan) => ({
+          userId: `demo-sample-${p.key}`,
+          age: p.age,
+          gender: p.gender,
+          tempo: tempoLevel(p.tempoAnswers),
+          immersion: immersionLevel(p.immersionAnswers, event.category),
+          must: { gender: p.mustGender, age: p.mustAge, promises: p.promises },
+          fandomIds: p.fandoms.map((n) => fandomIdByName.get(n)).filter((x): x is string => !!x),
+          days: plan.days
+            .filter((i) => event.days[i])
+            .map((i) => ({
+              eventDayId: event.days[i].id,
+              arriveTime: plan.arrive,
+              leaveTime: plan.leave,
+              togetherSegmentIds: plan.together.map((j) => event.days[i].segments[j]?.id).filter((x): x is string => !!x),
+            })),
+        })),
+    );
+    const mine: MatchProfile[] = users
+      .filter((u) => u.signupDone && preferences.has(`${u.id}|${eventId}`))
+      .map((u) => {
+        const pref = preferences.get(`${u.id}|${eventId}`)!;
+        return {
+          userId: u.id,
+          age: manAge(u.birth, today),
+          gender: u.gender,
+          tempo: pref.tempoLevel,
+          immersion: pref.immersionLevel,
+          must: pref.must,
+          fandomIds: u.fandomIds,
+          days: pref.days,
+        };
+      });
+    return [...samples, ...mine];
+  }
+
+  function cardOf(c: MatchCandidate): CandidateCard {
+    const sample = people.get(c.userId);
+    const demoUser = users.find((u) => u.id === c.userId);
+    return {
+      userId: c.userId,
+      nickname: sample?.nickname ?? demoUser?.nickname ?? '',
+      avatarInitial: sample?.avatarInitial ?? (demoUser?.nickname ? avatarInitial(demoUser.nickname) : ''),
+      avatarColor:
+        sample?.avatarColor ?? AVATAR_COLORS[(demoUser?.avatarColor as AvatarColor) ?? 'ink'] ?? AVATAR_COLORS.ink,
+      tempoGap: c.tempoGap,
+      immersionGap: c.immersionGap,
+      sameFan: c.sameFan,
+      overlaps: c.overlaps,
+      bestOverlapMinutes: c.bestOverlapMinutes,
+      shortStart: c.shortStart,
+      summary: describeCandidate(c),
+    };
+  }
+
+  function matchContext(eventId: string) {
+    const user = currentUser();
+    const { days } = visibleEvent(eventId);
+    const all = profiles(eventId);
+    const viewer = all.find((p) => p.userId === user.id);
+    if (!viewer) throw new ApiError('PREFERENCE_REQUIRED', '먼저 일정과 스타일을 알려 주세요.');
+    const today = isoOf(todayInSeoul(now()));
+    return { days: days.filter((d) => d.date >= today), all, viewer };
+  }
+
   return {
     setSessionToken(token) {
       sessionToken = token;
@@ -163,7 +291,7 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
     },
 
     async verifyIdentity(token: string, agreedTerms: AgreedTerm[]): Promise<IdentityResult> {
-      const m = /^fake:([A-Za-z0-9_-]{1,40}):(\d{4}-\d{2}-\d{2})$/.exec(token);
+      const m = /^fake:([A-Za-z0-9_-]{1,40}):(\d{4}-\d{2}-\d{2})(?::([MF]))?$/.exec(token);
       const birth = m ? parseCalendarDate(m[2]) : null;
       if (!m || !birth) throw new ApiError('INVALID_VERIFICATION', '생년월일을 다시 확인해 주세요.');
 
@@ -183,6 +311,8 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       const user: DemoUser = {
         id: `demo-user-${users.length + 1}`,
         person: m[1],
+        birth,
+        gender: (m[3] as 'M' | 'F' | undefined) ?? null,
         nickname: null,
         avatarColor: null,
         fandomIds: [],
@@ -310,6 +440,69 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
         },
       });
       return delay({ merged: false, progress: 'RECEIVED' });
+    },
+
+    async getPreference(eventId) {
+      const user = currentUser();
+      visibleEvent(eventId);
+      return delay(preferences.get(`${user.id}|${eventId}`) ?? null);
+    },
+
+    async savePreference(eventId, input: PreferenceInput) {
+      const user = currentUser();
+      const { event, days } = visibleEvent(eventId);
+      const today = isoOf(todayInSeoul(now()));
+      const check = checkPreference(input, days.filter((d) => d.date >= today));
+      if (!check.ok) {
+        throw new ApiError('PREFERENCE_INVALID', PREFERENCE_PROBLEM_MESSAGES[check.problem], { problem: check.problem });
+      }
+      const view: PreferenceView = {
+        ...input,
+        tempoLevel: tempoLevel(input.tempoAnswers),
+        immersionLevel: immersionLevel(input.immersionAnswers, event.category),
+      };
+      preferences.set(`${user.id}|${eventId}`, view);
+      return delay(view);
+    },
+
+    async getCandidates(eventId, options) {
+      const { days, all, viewer } = matchContext(eventId);
+      const result = matchCandidates(viewer, all, days, POLICY, options);
+      const cards = result.candidates.map(cardOf);
+      return delay({
+        total: cards.length,
+        immersionRelaxed: result.immersionRelaxed,
+        candidates: cards,
+        widen: cards.length === 0 ? expectedCounts(viewer, all, days, POLICY, options) : null,
+      });
+    },
+
+    async getCandidate(eventId, userId) {
+      const { days, all, viewer } = matchContext(eventId);
+      const c = matchCandidates(viewer, all, days, POLICY, { shortTime: true, immersionPlus: true }).candidates.find(
+        (x) => x.userId === userId,
+      );
+      if (!c) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const sample = people.get(userId);
+      return delay({
+        ...cardOf(c),
+        reasons: explainMatch(c, days, PROMISE_SHORT_LABELS),
+        publicFandoms: sample?.fandomPublic ? sample.fandoms : [],
+      });
+    },
+
+    async registerWait(eventId, includeImmersionPlus) {
+      const user = currentUser();
+      matchContext(eventId);
+      const { days } = visibleEvent(eventId);
+      const [y, m, d] = days[0].date.split('-').map(Number);
+      const endsOn = new Date(Date.UTC(y, m - 1, d - POLICY_DEFAULTS.WAIT_ALERT_END_DAYS_BEFORE)).toISOString().slice(0, 10);
+      if (isoOf(todayInSeoul(now())) > endsOn) {
+        throw new ApiError('WAIT_TOO_LATE', `행사 ${POLICY_DEFAULTS.WAIT_ALERT_END_DAYS_BEFORE}일 전부터는 알림을 신청할 수 없어요.`);
+      }
+      const result = { endsOn, includeImmersionPlus };
+      waits.set(`${user.id}|${eventId}`, result);
+      return delay(result);
     },
   };
 }

@@ -93,7 +93,8 @@ export class SignupService {
     if (outcome !== 'ADULT') return { outcome };
 
     const ciHash = this.hashCi(identity.ci);
-    const existing = await this.loginExisting(ciHash);
+    const birthDate = `${identity.birthDate.year}-${String(identity.birthDate.month).padStart(2, '0')}-${String(identity.birthDate.day).padStart(2, '0')}`;
+    const existing = await this.loginExisting(ciHash, { birthDate, gender: identity.gender });
     if (existing) return existing;
 
     if (!hasAgreedToRequiredTerms(agreedTerms)) {
@@ -104,7 +105,7 @@ export class SignupService {
       const user = await this.prisma.$transaction(async (tx) => {
         const created = await this.accountState.createVerifiedAdult(tx);
         await tx.identityVerification.create({
-          data: { userId: created.id, ciHash, provider: this.identityProvider.name },
+          data: { userId: created.id, ciHash, provider: this.identityProvider.name, birthDate, gender: identity.gender },
         });
         await tx.termsConsent.createMany({
           data: TERMS.map((t) => ({ userId: created.id, termCode: t.code, termVersion: t.version })),
@@ -116,20 +117,30 @@ export class SignupService {
     } catch (error) {
       // 같은 사람이 동시에 두 번 가입을 누른 경우: 먼저 만들어진 계정으로 로그인
       if (isUniqueViolation(error, 'ciHash')) {
-        const again = await this.loginExisting(ciHash);
+        const again = await this.loginExisting(ciHash, { birthDate, gender: identity.gender });
         if (again) return again;
       }
       throw error;
     }
   }
 
-  private async loginExisting(ciHash: string): Promise<IdentityResult | null> {
+  private async loginExisting(
+    ciHash: string,
+    latest: { birthDate: string; gender: 'M' | 'F' | null },
+  ): Promise<IdentityResult | null> {
     const found = await this.prisma.identityVerification.findUnique({
       where: { ciHash },
       include: { user: true },
     });
     if (!found) return null;
     if (found.user.status !== 'ACTIVE') return { outcome: 'ACCOUNT_UNAVAILABLE' };
+    if (!found.birthDate || !found.gender) {
+      // 생년월일·성별을 저장하기 전에 가입한 사람: 이번 본인 확인 결과로 채웁니다.
+      await this.prisma.identityVerification.update({
+        where: { id: found.id },
+        data: { birthDate: found.birthDate ?? latest.birthDate, gender: found.gender ?? latest.gender },
+      });
+    }
     const sessionToken = await this.sessions.create(found.userId);
     return { outcome: 'LOGGED_IN', sessionToken, nextStep: stepOf(found.user) };
   }
