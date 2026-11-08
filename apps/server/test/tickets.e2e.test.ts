@@ -266,7 +266,7 @@ describe('매칭에 반영', () => {
       .send({
         days: days.map((i) => ({ eventDayId: ev.days[i].id, arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ev.days[i].segments.map((s) => s.id) })),
         tempoAnswers: [2, 2, 2],
-        immersionAnswers: [2, 2, 2],
+        immersionAnswers: [2, 2],
         must: { gender: 'ANY', age: 'ANY', promises: [] },
       })
       .expect(200);

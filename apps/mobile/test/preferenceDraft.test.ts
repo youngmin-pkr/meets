@@ -65,10 +65,23 @@ describe('입력 흐름 상태', () => {
     const ev = event([day('d1', '2026-12-12')]);
     let d = initialDraft(ev, null, '2026-11-07');
     expect(toInput(d, ev)).toBeNull();
-    d = { ...d, tempoAnswers: [2, 2, 2], immersionAnswers: [1, 2, 3] };
+    d = { ...d, tempoAnswers: [2, 2, 2], immersionAnswers: [1, 3] };
     d = togglePromise(d, 'PUNCTUAL');
     expect(toInput(d, ev)).toMatchObject({ tempoAnswers: [2, 2, 2], must: { promises: ['PUNCTUAL'] } });
     expect(togglePromise(d, 'PUNCTUAL').must.promises).toEqual([]);
+  });
+
+  test('예전 방식(몰입도 답 3개)으로 저장된 답은 다시 고르게 한다', () => {
+    const ev = event([day('d1', '2026-12-12')]);
+    const saved = {
+      days: [{ eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['d1-s1'] }],
+      tempoAnswers: [1, 2, 3] as Array<1 | 2 | 3>,
+      immersionAnswers: [3, 2, 1] as Array<1 | 2 | 3>,
+      must: { gender: 'ANY' as const, age: 'ANY' as const, promises: [] },
+      tempoLevel: 2 as const,
+      immersionLevel: 3 as const,
+    };
+    expect(initialDraft(ev, saved, '2026-11-07').immersionAnswers).toEqual([null, null]);
   });
 
   test('저장된 값을 불러온다 (지난 날짜는 빼고)', () => {
@@ -79,7 +92,7 @@ describe('입력 흐름 상태', () => {
         { eventDayId: 'd2', arriveTime: '16:00', leaveTime: '20:00', togetherSegmentIds: ['d2-s2'] },
       ],
       tempoAnswers: [1, 2, 3] as Array<1 | 2 | 3>,
-      immersionAnswers: [3, 2, 1] as Array<1 | 2 | 3>,
+      immersionAnswers: [3, 1] as Array<1 | 2 | 3>,
       must: { gender: 'SAME' as const, age: 'WITHIN_3' as const, promises: ['PUNCTUAL' as const] },
       tempoLevel: 2 as const,
       immersionLevel: 3 as const,

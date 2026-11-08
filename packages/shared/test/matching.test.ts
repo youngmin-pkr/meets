@@ -6,6 +6,7 @@ import {
   describeCandidate,
   expectedCounts,
   immersionLevel,
+  immersionQuestions,
   matchCandidates,
   overlapOnDay,
   passesMust,
@@ -64,9 +65,22 @@ describe('질문 답 → 단계', () => {
     expect(tempoLevel([1, 1, 2])).toBe(1);
   });
 
-  test('몰입도는 행사 분류에 맞는 질문의 답', () => {
-    expect(immersionLevel([3, 1, 2], 'PERFORMANCE')).toBe(3);
-    expect(immersionLevel([3, 1, 2], 'EXHIBITION')).toBe(1);
+  test('몰입도는 행사 종류에 맞는 첫 번째 질문의 답', () => {
+    expect(immersionLevel([3, 1])).toBe(3);
+    expect(immersionLevel([1, 3])).toBe(1);
+  });
+
+  test('행사 종류에 맞는 질문만 보여 준다', () => {
+    expect(immersionQuestions('PERFORMANCE').map((q) => q.title)).toEqual([
+      '공연을 볼 때 나는…',
+      '같이 간 사람이 응원법을 몰라 가만히 있다면?',
+    ]);
+    expect(immersionQuestions('EXHIBITION').map((q) => q.title)).toEqual([
+      '전시를 볼 때 나는…',
+      '같이 간 사람이 나보다 빨리 둘러보고 싶어 한다면?',
+    ]);
+    // 전시·팝업 쪽에는 공연 관련 문구가 없어야 함
+    expect(JSON.stringify(immersionQuestions('EXHIBITION'))).not.toMatch(/공연|응원|떼창/);
   });
 });
 
@@ -277,7 +291,7 @@ describe('입력 검사와 설명', () => {
   const valid = {
     days: [{ eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['show'] }],
     tempoAnswers: [2, 2, 2] as const,
-    immersionAnswers: [2, 2, 2] as const,
+    immersionAnswers: [2, 2] as const,
     must: { gender: 'ANY' as const, age: 'ANY' as const, promises: ['PUNCTUAL' as const] },
   };
   const input = (o: object) => ({ ...valid, tempoAnswers: [...valid.tempoAnswers], immersionAnswers: [...valid.immersionAnswers], ...o });
@@ -293,7 +307,8 @@ describe('입력 검사와 설명', () => {
     [{ days: [{ eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['nope'] }] }, 'UNKNOWN_SEGMENT'],
     [{ days: [{ eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: [] }] }, 'NO_TOGETHER_SEGMENT'],
     [{ tempoAnswers: [2, 2] }, 'BAD_ANSWERS'],
-    [{ immersionAnswers: [2, 2, 4] }, 'BAD_ANSWERS'],
+    [{ immersionAnswers: [2, 4] }, 'BAD_ANSWERS'],
+    [{ immersionAnswers: [2, 2, 2] }, 'BAD_ANSWERS'],
     [{ must: { gender: 'ANY', age: 'WITHIN_9', promises: [] } }, 'BAD_MUST'],
     [{ must: { gender: 'ANY', age: 'ANY', promises: ['PUNCTUAL', 'PUNCTUAL'] } }, 'BAD_MUST'],
   ])('%o → %s', (patch, problem) => {

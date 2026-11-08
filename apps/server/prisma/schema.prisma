@@ -309,7 +309,7 @@ model Preference {
   eventId          String
   /// Q1~Q3 답 (1~3)
   tempoAnswers     Int[]
-  /// Q4~Q6 답 (1~3)
+  /// 몰입도 질문 2개(행사 종류에 맞는 질문, 함께 즐길 때)의 답 (1~3)
   immersionAnswers Int[]
   tempoLevel       Int
   immersionLevel   Int

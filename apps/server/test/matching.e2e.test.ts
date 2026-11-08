@@ -77,7 +77,7 @@ function pref(ev: Ev, o: { days?: number[]; together?: number[]; arrive?: string
       togetherSegmentIds: (o.together ?? [0, 1, 2]).map((s) => ev.days[i].segments[s].id),
     })),
     tempoAnswers: o.tempo ?? [2, 2, 2],
-    immersionAnswers: o.immersion ?? [2, 2, 2],
+    immersionAnswers: o.immersion ?? [2, 2],
     must: o.must ?? { gender: 'ANY', age: 'ANY', promises: [] },
   };
 }
@@ -88,8 +88,8 @@ describe('입력 흐름 저장', () => {
   test('저장하면 템포·몰입도 단계가 계산되고 다시 불러올 수 있다', async () => {
     const ev = await createEvent();
     const a = await member('a');
-    const res = await save(a.token, ev, pref(ev, { tempo: [3, 3, 2], immersion: [1, 3, 2] })).expect(200);
-    expect(res.body).toMatchObject({ tempoLevel: 3, immersionLevel: 1 }); // 공연이라 Q4 답
+    const res = await save(a.token, ev, pref(ev, { tempo: [3, 3, 2], immersion: [1, 3] })).expect(200);
+    expect(res.body).toMatchObject({ tempoLevel: 3, immersionLevel: 1 }); // 첫 번째(공연 Q4) 답
     const got = await http(app).get(`/events/${ev.id}/preference`).set(auth(a.token)).expect(200);
     expect(got.body.preference.days).toHaveLength(1);
   });

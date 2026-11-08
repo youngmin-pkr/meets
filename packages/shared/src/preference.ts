@@ -47,38 +47,65 @@ export const TEMPO_QUESTIONS: ChoiceQuestion[] = [
   },
 ];
 
-export const IMMERSION_QUESTIONS: ChoiceQuestion[] = [
-  {
-    id: 'Q4',
-    label: 'Q4 · 콘서트·페스티벌',
-    title: '공연을 볼 때 나는…',
-    options: [
-      { value: 3, text: '응원법·떼창을 풀가동해요' },
-      { value: 2, text: '따라 부르되 적당히 즐겨요' },
-      { value: 1, text: '가만히 집중해서 감상해요' },
-    ],
-  },
-  {
-    id: 'Q5',
-    label: 'Q5 · 전시·팝업·박람회',
-    title: '전시를 볼 때 나는…',
-    options: [
-      { value: 3, text: '하나하나 오래 머물러 봐요' },
-      { value: 2, text: '눈에 띄는 것 위주로 봐요' },
-      { value: 1, text: '훑고 지나가며 사진을 많이 찍어요' },
-    ],
-  },
-  {
-    id: 'Q6',
-    label: 'Q6 · 함께 즐길 때',
-    title: '같이 간 사람이 응원법을 몰라 가만히 있다면?',
-    options: [
-      { value: 1, text: '신경 쓰지 않고 내 방식대로 즐겨요' },
-      { value: 2, text: '알려주고 같이 해요' },
-      { value: 3, text: '조금 신경 쓰이고 아쉬워요' },
-    ],
-  },
-];
+const PERFORMANCE_QUESTION: ChoiceQuestion = {
+  id: 'Q4',
+  label: 'Q4 · 콘서트·페스티벌',
+  title: '공연을 볼 때 나는…',
+  options: [
+    { value: 3, text: '응원법·떼창을 풀가동해요' },
+    { value: 2, text: '따라 부르되 적당히 즐겨요' },
+    { value: 1, text: '가만히 집중해서 감상해요' },
+  ],
+};
+
+const EXHIBITION_QUESTION: ChoiceQuestion = {
+  id: 'Q4',
+  label: 'Q4 · 전시·팝업·박람회',
+  title: '전시를 볼 때 나는…',
+  options: [
+    { value: 3, text: '하나하나 오래 머물러 봐요' },
+    { value: 2, text: '눈에 띄는 것 위주로 봐요' },
+    { value: 1, text: '훑고 지나가며 사진을 많이 찍어요' },
+  ],
+};
+
+const TOGETHER_PERFORMANCE: ChoiceQuestion = {
+  id: 'Q5',
+  label: 'Q5 · 함께 즐길 때',
+  title: '같이 간 사람이 응원법을 몰라 가만히 있다면?',
+  options: [
+    { value: 1, text: '신경 쓰지 않고 내 방식대로 즐겨요' },
+    { value: 2, text: '알려주고 같이 해요' },
+    { value: 3, text: '조금 신경 쓰이고 아쉬워요' },
+  ],
+};
+
+/** 전시·팝업·박람회용 '함께 즐길 때' (사용자 결정 2026-11-08, 시안에는 없음) */
+const TOGETHER_EXHIBITION: ChoiceQuestion = {
+  id: 'Q5',
+  label: 'Q5 · 함께 즐길 때',
+  title: '같이 간 사람이 나보다 빨리 둘러보고 싶어 한다면?',
+  options: [
+    { value: 1, text: '각자 보고 출구에서 만나요' },
+    { value: 2, text: '중간중간 맞춰 가요' },
+    { value: 3, text: '같이 천천히 봤으면 좋겠어요' },
+  ],
+};
+
+/**
+ * 몰입도 질문은 행사 종류에 맞는 것만 보여 줍니다. (사용자 결정 2026-11-08)
+ * 첫 번째 질문의 답이 몰입도 단계이고, 두 번째(함께 즐길 때)는 단계 계산에 넣지 않습니다.
+ */
+export const IMMERSION_QUESTIONS_BY_CATEGORY: Record<EventCategory, ChoiceQuestion[]> = {
+  PERFORMANCE: [PERFORMANCE_QUESTION, TOGETHER_PERFORMANCE],
+  EXHIBITION: [EXHIBITION_QUESTION, TOGETHER_EXHIBITION],
+};
+
+export function immersionQuestions(category: EventCategory): ChoiceQuestion[] {
+  return IMMERSION_QUESTIONS_BY_CATEGORY[category];
+}
+
+export const IMMERSION_ANSWER_COUNT = 2;
 
 export type AnswerValue = 1 | 2 | 3;
 
@@ -92,12 +119,9 @@ export function tempoLevel(answers: AnswerValue[]): AnswerValue {
   return roundLevel(answers);
 }
 
-/**
- * 몰입도 단계: 행사 분류에 맞는 질문(공연이면 Q4, 전시면 Q5)의 답.
- * Q6(함께 즐길 때)은 단계 계산에 넣지 않고 후보 설명에만 씁니다.
- */
-export function immersionLevel(answers: AnswerValue[], category: EventCategory): AnswerValue {
-  return category === 'PERFORMANCE' ? answers[0] : answers[1];
+/** 몰입도 단계: 행사 종류에 맞는 첫 번째 질문의 답 (1~3) */
+export function immersionLevel(answers: AnswerValue[]): AnswerValue {
+  return answers[0];
 }
 
 export type MustGender = 'ANY' | 'SAME';
@@ -218,7 +242,7 @@ export function checkPreference(
     }
   }
   if (input.tempoAnswers.length !== 3 || !input.tempoAnswers.every(isAnswer)) return { ok: false, problem: 'BAD_ANSWERS' };
-  if (input.immersionAnswers.length !== 3 || !input.immersionAnswers.every(isAnswer)) {
+  if (input.immersionAnswers.length !== IMMERSION_ANSWER_COUNT || !input.immersionAnswers.every(isAnswer)) {
     return { ok: false, problem: 'BAD_ANSWERS' };
   }
   const m = input.must;

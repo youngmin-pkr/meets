@@ -7,7 +7,7 @@ import { Text, View } from 'react-native';
 import {
   describeEventDate,
   describeEventDateRange,
-  IMMERSION_QUESTIONS,
+  immersionQuestions,
   MUST_AGE_LABELS,
   MUST_GENDER_LABELS,
   PROMISE_CODES,
@@ -15,6 +15,7 @@ import {
   TEMPO_QUESTIONS,
   type AnswerValue,
   type ChoiceQuestion,
+  type EventCategory,
   type EventDetail,
   type MustAge,
   type MustGender,
@@ -218,8 +219,12 @@ export function TempoScreen(p: Omit<Parameters<typeof QuestionsScreen>[0], 'step
   return <QuestionsScreen {...p} step={3} tag="스타일 ① 템포" title="나는 이렇게 움직여요" questions={TEMPO_QUESTIONS} />;
 }
 
-export function ImmersionScreen(p: Omit<Parameters<typeof QuestionsScreen>[0], 'step' | 'tag' | 'title' | 'questions'>) {
-  return <QuestionsScreen {...p} step={4} tag="스타일 ② 몰입도" title="나는 이렇게 즐겨요" questions={IMMERSION_QUESTIONS} />;
+/** 몰입도: 행사 종류(공연 / 전시·팝업·박람회)에 맞는 질문만 보여 줍니다. */
+export function ImmersionScreen({
+  category,
+  ...p
+}: { category: EventCategory } & Omit<Parameters<typeof QuestionsScreen>[0], 'step' | 'tag' | 'title' | 'questions'>) {
+  return <QuestionsScreen {...p} step={4} tag="스타일 ② 몰입도" title="나는 이렇게 즐겨요" questions={immersionQuestions(category)} />;
 }
 
 export function MustScreen(props: {
@@ -239,7 +244,7 @@ export function MustScreen(props: {
       <Body>여기서 고른 조건이 어긋나는 사람은 후보에 나타나지 않아요.</Body>
 
       <View style={{ gap: 12 }}>
-        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.muted }}>Q7 · 함께할 상대의 범위</Text>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.muted }}>Q6 · 함께할 상대의 범위</Text>
         <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink }}>성별</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
           {(Object.keys(MUST_GENDER_LABELS) as MustGender[]).map((g) => (
@@ -256,7 +261,7 @@ export function MustScreen(props: {
       </View>
 
       <View style={{ gap: 8 }}>
-        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.muted }}>Q8 · 꼭 지켰으면 하는 약속</Text>
+        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.muted }}>Q7 · 꼭 지켰으면 하는 약속</Text>
         <Text style={{ fontSize: 16, fontWeight: '700', color: colors.ink }}>해당하는 것을 모두 골라 주세요</Text>
         {PROMISE_CODES.map((c) => (
           <ChoiceRow key={c} multi label={PROMISE_LABELS[c]} selected={draft.must.promises.includes(c)} onPress={() => props.onChange(togglePromise(draft, c))} />
