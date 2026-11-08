@@ -8,11 +8,13 @@ import { parseCalendarDate, type CalendarDate } from '@meets/shared';
  * identity.module.ts에서 바꿔 끼우면 됩니다. 나머지 코드는 바뀌지 않습니다.
  *
  * 업체는 이름·전화번호도 돌려주지만, 연결부에서 버리고
- * CI(사람마다 하나인 고유 번호)와 생년월일만 넘깁니다.
+ * CI(사람마다 하나인 고유 번호), 생년월일, 성별만 넘깁니다.
  */
 export interface VerifiedIdentity {
   ci: string;
   birthDate: CalendarDate;
+  /** 'M' | 'F' */
+  gender: 'M' | 'F' | null;
 }
 
 export interface IdentityProvider {
@@ -26,8 +28,8 @@ export const IDENTITY_PROVIDER = Symbol('IDENTITY_PROVIDER');
 /**
  * 테스트용 가짜 본인 확인
  *
- * 토큰 형식: fake:<테스트 사용자 번호>:<생년월일 YYYY-MM-DD>
- * 예) fake:tester1:2000-05-01
+ * 토큰 형식: fake:<테스트 사용자 번호>:<생년월일 YYYY-MM-DD>[:<성별 M|F>]
+ * 예) fake:tester1:2000-05-01:F
  * 실제 서비스(production)에서는 config.ts가 막습니다.
  */
 @Injectable()
@@ -35,10 +37,10 @@ export class FakeIdentityProvider implements IdentityProvider {
   readonly name = 'fake';
 
   async verify(verificationToken: string): Promise<VerifiedIdentity | null> {
-    const m = /^fake:([A-Za-z0-9_-]{1,40}):(\d{4}-\d{2}-\d{2})$/.exec(verificationToken);
+    const m = /^fake:([A-Za-z0-9_-]{1,40}):(\d{4}-\d{2}-\d{2})(?::([MF]))?$/.exec(verificationToken);
     if (!m) return null;
     const birthDate = parseCalendarDate(m[2]);
     if (!birthDate) return null;
-    return { ci: `FAKE-CI-${m[1]}`, birthDate };
+    return { ci: `FAKE-CI-${m[1]}`, birthDate, gender: (m[3] as 'M' | 'F' | undefined) ?? null };
   }
 }

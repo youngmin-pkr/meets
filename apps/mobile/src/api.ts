@@ -6,7 +6,16 @@
  *   GitHub Pages에 올리는 웹 버전용입니다.
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
-import type { AgreedTerm, EventDetail, EventReportResult, EventSummary, IdentityResult } from '@meets/shared';
+import type {
+  AgreedTerm,
+  CandidateDetail,
+  CandidatesResponse,
+  EventDetail,
+  EventReportResult,
+  EventSummary,
+  IdentityResult,
+  PreferenceView,
+} from '@meets/shared';
 import { ApiError, type Backend, type Me, type SignupConfig } from './apiTypes';
 import { createDemoBackend } from './demoBackend';
 
@@ -57,6 +66,30 @@ function createHttpBackend(baseUrl: string): Backend {
     },
     getEvent: (id) => call<EventDetail>('GET', `/events/${encodeURIComponent(id)}`),
     reportEvent: (input) => call<EventReportResult>('POST', '/event-reports', input),
+    getPreference: async (eventId) =>
+      (await call<{ preference: PreferenceView | null }>('GET', `/events/${encodeURIComponent(eventId)}/preference`)).preference,
+    savePreference: (eventId, input) =>
+      call<PreferenceView>('PUT', `/events/${encodeURIComponent(eventId)}/preference`, input),
+    getCandidates: (eventId, o) => {
+      const parts = [
+        o.dayId ? `dayId=${encodeURIComponent(o.dayId)}` : '',
+        o.sort ? `sort=${o.sort}` : '',
+        o.shortTime ? 'shortTime=true' : '',
+        o.immersionPlus ? 'immersionPlus=true' : '',
+      ].filter(Boolean);
+      return call<CandidatesResponse>(
+        'GET',
+        `/events/${encodeURIComponent(eventId)}/candidates${parts.length ? `?${parts.join('&')}` : ''}`,
+      );
+    },
+    getCandidate: (eventId, userId) =>
+      call<CandidateDetail>('GET', `/events/${encodeURIComponent(eventId)}/candidates/${encodeURIComponent(userId)}`),
+    registerWait: (eventId, includeImmersionPlus) =>
+      call<{ endsOn: string; includeImmersionPlus: boolean }>(
+        'POST',
+        `/events/${encodeURIComponent(eventId)}/wait-registrations`,
+        { includeImmersionPlus },
+      ),
   };
 }
 

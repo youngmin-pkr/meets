@@ -53,15 +53,22 @@ model User {
   fandoms  UserFandom[]
   sessions Session[]
   eventReports EventReport[]
+  preferences  Preference[]
+  waitRegistrations WaitRegistration[]
 }
 
-/// 본인 확인 기록. 이름·전화번호·생년월일은 저장하지 않고,
+/// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
 /// 같은 사람이 계정을 두 개 만들지 못하도록 CI의 해시만 둡니다.
+/// 생년월일·성별은 매칭의 필수 조건(나이 범위·같은 성별)에만 쓰고 다른 사용자에게 보여 주지 않습니다.
 model IdentityVerification {
   id         String   @id @default(uuid())
   userId     String   @unique
   ciHash     String   @unique
   provider   String
+  /// "YYYY-MM-DD"
+  birthDate  String?
+  /// "M" | "F"
+  gender     String?
   verifiedAt DateTime @default(now())
   user       User     @relation(fields: [userId], references: [id])
 }
@@ -175,6 +182,8 @@ model Event {
   days          EventDay[]
   meetingSpots  MeetingSpot[]
   reports       EventReport[]
+  preferences   Preference[]
+  waitRegistrations WaitRegistration[]
 
   @@index([status])
 }
@@ -188,6 +197,7 @@ model EventDay {
   endTime   String
   event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   segments  EventSegment[]
+  preferenceDays PreferenceDay[]
 
   @@unique([eventId, date])
 }
@@ -284,4 +294,63 @@ model AdminApproval {
   decidedAt     DateTime?
 
   @@index([kind, targetId, status])
+}
+
+// ───────────── 3단계: 입력 흐름과 매칭 ─────────────
+
+/// 입력 흐름의 결과 (행사마다 하나). 매칭의 입력입니다.
+model Preference {
+  id               String          @id @default(uuid())
+  userId           String
+  eventId          String
+  /// Q1~Q3 답 (1~3)
+  tempoAnswers     Int[]
+  /// Q4~Q6 답 (1~3)
+  immersionAnswers Int[]
+  tempoLevel       Int
+  immersionLevel   Int
+  mustGender       String
+  mustAge          String
+  promises         String[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  user             User            @relation(fields: [userId], references: [id])
+  event            Event           @relation(fields: [eventId], references: [id])
+  days             PreferenceDay[]
+
+  @@unique([userId, eventId])
+  @@index([eventId])
+}
+
+/// 고른 날의 일정: 도착 가능 시간, 귀가 마감, 같이할 구간
+model PreferenceDay {
+  id                 String     @id @default(uuid())
+  preferenceId       String
+  eventDayId         String
+  arriveTime         String
+  leaveTime          String
+  togetherSegmentIds String[]
+  preference         Preference @relation(fields: [preferenceId], references: [id], onDelete: Cascade)
+  eventDay           EventDay   @relation(fields: [eventDayId], references: [id], onDelete: Cascade)
+
+  @@unique([preferenceId, eventDayId])
+}
+
+/// 후보 없음 → 알림 신청. 출시 후 행사별 대기방으로 넓힐 수 있게 행사 단위로 저장합니다.
+model WaitRegistration {
+  id         String    @id @default(uuid())
+  userId     String
+  eventId    String
+  /// 신청 당시 조건 (고른 날, 몰입도 한 단계 차이도 알려 줄지)
+  conditions Json
+  /// 이 날짜(포함)까지만 알림 ("YYYY-MM-DD", 행사 3일 전)
+  endsOn     String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  /// 마지막으로 알림을 보낸 시각 (알림은 4단계에서 연결)
+  notifiedAt DateTime?
+  user       User      @relation(fields: [userId], references: [id])
+  event      Event     @relation(fields: [eventId], references: [id])
+
+  @@unique([userId, eventId])
 }

@@ -25,6 +25,20 @@ export const POLICY_DEFAULTS = {
   SESSION_TTL_DAYS: 30,
   /** 운영자 로그인 유지 기간(시간) */
   ADMIN_SESSION_TTL_HOURS: 12,
+  /** 매칭: 템포 차이 허용 범위(단계) */
+  MATCH_TEMPO_MAX_GAP: 1,
+  /** 매칭: 몰입도 차이 허용 범위(단계) */
+  MATCH_IMMERSION_MAX_GAP: 1,
+  /** 매칭: 후보가 적을 때 넓힌 몰입도 차이 허용 범위(단계) */
+  MATCH_IMMERSION_RELAXED_GAP: 2,
+  /** 매칭: 후보가 이 수보다 적으면 '후보가 적다'로 보고 범위를 넓힘 */
+  MATCH_FEW_CANDIDATES: 3,
+  /** 매칭: 같이할 시간이 최소 이만큼(분) 겹쳐야 후보 */
+  MATCH_MIN_OVERLAP_MINUTES: 120,
+  /** 매칭: '함께할 시간 줄이기'를 고르면 쓰는 최소 겹침(분) */
+  MATCH_SHORT_OVERLAP_MINUTES: 60,
+  /** 후보 없음 알림 신청은 행사 며칠 전까지 (정리문서 정책 값 15) */
+  WAIT_ALERT_END_DAYS_BEFORE: 3,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

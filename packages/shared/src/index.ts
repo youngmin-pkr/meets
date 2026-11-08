@@ -5,3 +5,5 @@ export * from './nickname';
 export * from './signup';
 export * from './events';
 export * from './sample-events';
+export * from './preference';
+export * from './matching';

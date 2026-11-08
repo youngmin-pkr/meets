@@ -12,7 +12,7 @@ import { api, ApiError, type SignupConfig } from '../api';
 import { describeIsoDate, parseBirthInput } from '../birthInput';
 import { allRequiredChecked } from '../signupFlow';
 import { colors } from '../theme';
-import { Body, Card, ErrorText, Page, PrimaryButton, styles, Title, TopBar } from '../ui';
+import { Body, Card, ErrorText, Page, Pill, PrimaryButton, styles, Title, TopBar } from '../ui';
 
 export function VerifyScreen(props: {
   config: SignupConfig;
@@ -26,6 +26,7 @@ export function VerifyScreen(props: {
   const [showTerms, setShowTerms] = useState(props.mode === 'signup');
   const [testPerson, setTestPerson] = useState('');
   const [testBirth, setTestBirth] = useState('');
+  const [testGender, setTestGender] = useState<'F' | 'M'>('F');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -37,7 +38,7 @@ export function VerifyScreen(props: {
     setError(null);
     setLoading(true);
     try {
-      const token = `fake:${testPerson}:${birthIso}`;
+      const token = `fake:${testPerson}:${birthIso}:${testGender}`;
       const agreed = showTerms
         ? config.terms.filter((t) => checked[t.code]).map((t) => ({ code: t.code, version: t.version }))
         : [];
@@ -133,6 +134,11 @@ export function VerifyScreen(props: {
                 ? `${describeIsoDate(birthIso)}로 확인해요`
                 : '생년월일을 다시 확인해 주세요'}
           </Text>
+          <Text style={styles.label}>성별</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pill label="여성" selected={testGender === 'F'} onPress={() => setTestGender('F')} />
+            <Pill label="남성" selected={testGender === 'M'} onPress={() => setTestGender('M')} />
+          </View>
         </View>
       ) : null}
 

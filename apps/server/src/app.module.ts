@@ -7,6 +7,8 @@ import { AdminEventsService } from './events/admin-events.service';
 import { EventStateService } from './events/event-state.service';
 import { EventsController } from './events/events.controller';
 import { EventsService } from './events/events.service';
+import { MatchingController } from './matching/matching.controller';
+import { MatchingService } from './matching/matching.service';
 import { AuthGuard } from './auth/auth.guard';
 import { SessionService } from './auth/session.service';
 import { CLOCK, systemClock, type Clock } from './common/clock';
@@ -22,7 +24,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -40,6 +42,7 @@ export class AppModule {
         EventStateService,
         EventsService,
         AdminEventsService,
+        MatchingService,
       ],
     };
   }

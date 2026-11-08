@@ -14,9 +14,9 @@ import {
 } from '@meets/shared';
 import { api } from '../api';
 import { colors } from '../theme';
-import { Body, ErrorText, keepWords, Page, PrimaryButton, styles, Title } from '../ui';
+import { Body, ErrorText, keepWords, Page, PrimaryButton, StepHeader, styles, Title } from '../ui';
 
-export function EventListScreen(props: { onNext: (event: EventSummary) => void; onReport: () => void }) {
+export function EventListScreen(props: { onNext: (event: EventSummary) => void; onReport: () => void; flowError?: string | null }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<EventCategory | undefined>(undefined);
   const [events, setEvents] = useState<EventSummary[] | null>(null);
@@ -53,6 +53,7 @@ export function EventListScreen(props: { onNext: (event: EventSummary) => void; 
         <PrimaryButton label="다음" onPress={() => selected && props.onNext(selected)} disabled={!selected} />
       }
     >
+      <StepHeader step={1} total={5} />
       <Title>{'어떤 행사에\n함께 가고 싶으세요?'}</Title>
       <Body>행사를 고르면, 같은 행사에 가는 사람들만 보여드려요.</Body>
 
@@ -98,7 +99,7 @@ export function EventListScreen(props: { onNext: (event: EventSummary) => void; 
           <EventCard key={e.id} event={e} selected={selected?.id === e.id} onPress={() => setSelected(e)} />
         ))}
       </View>
-      <ErrorText message={error} />
+      <ErrorText message={error ?? props.flowError ?? null} />
 
       <Pressable
         onPress={props.onReport}

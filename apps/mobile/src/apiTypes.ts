@@ -1,6 +1,11 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
   AgreedTerm,
+  CandidateDetail,
+  CandidatesResponse,
+  MatchOptions,
+  PreferenceInput,
+  PreferenceView,
   EventCategory,
   EventDetail,
   EventReportInput,
@@ -53,4 +58,9 @@ export interface Backend {
   listEvents(query: { q?: string; category?: EventCategory }): Promise<EventSummary[]>;
   getEvent(id: string): Promise<EventDetail>;
   reportEvent(input: EventReportInput): Promise<EventReportResult>;
+  getPreference(eventId: string): Promise<PreferenceView | null>;
+  savePreference(eventId: string, input: PreferenceInput): Promise<PreferenceView>;
+  getCandidates(eventId: string, options: MatchOptions): Promise<CandidatesResponse>;
+  getCandidate(eventId: string, userId: string): Promise<CandidateDetail>;
+  registerWait(eventId: string, includeImmersionPlus: boolean): Promise<{ endsOn: string; includeImmersionPlus: boolean }>;
 }
