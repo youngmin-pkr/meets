@@ -21,6 +21,7 @@ import {
   PREFERENCE_PROBLEM_MESSAGES,
   PROMISE_SHORT_LABELS,
   SAMPLE_PEOPLE,
+  sampleImmersionAnswers,
   tempoLevel,
   type CalendarDate,
   type CandidateCard,
@@ -238,7 +239,7 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
           age: p.age,
           gender: p.gender,
           tempo: tempoLevel(p.tempoAnswers),
-          immersion: immersionLevel(p.immersionAnswers, event.category),
+          immersion: immersionLevel(sampleImmersionAnswers(p, event.category)),
           must: { gender: p.mustGender, age: p.mustAge, promises: p.promises },
           fandomIds: p.fandoms.map((n) => fandomIdByName.get(n)).filter((x): x is string => !!x),
           grade: plan.ticket === 'VERIFIED' ? 'VERIFIED' : plan.ticket === 'PLANNED' && !event.ticketRequired ? 'PLANNED' : null,
@@ -489,7 +490,7 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       const view: PreferenceView = {
         ...input,
         tempoLevel: tempoLevel(input.tempoAnswers),
-        immersionLevel: immersionLevel(input.immersionAnswers, event.category),
+        immersionLevel: immersionLevel(input.immersionAnswers),
       };
       preferences.set(`${user.id}|${eventId}`, view);
       return delay(view);

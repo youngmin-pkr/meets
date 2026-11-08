@@ -3,7 +3,7 @@
  * 날짜는 오늘을 기준으로 계산해서 항상 앞으로 열릴 행사가 되게 합니다.
  */
 import type { CalendarDate } from './age';
-import type { EventType } from './events';
+import type { EventCategory, EventType } from './events';
 
 export interface SampleEvent {
   name: string;
@@ -116,6 +116,7 @@ export interface SamplePerson {
   gender: 'M' | 'F';
   age: number;
   tempoAnswers: [1 | 2 | 3, 1 | 2 | 3, 1 | 2 | 3];
+  /** [공연 질문, 전시 질문, 함께 즐길 때 질문] — 행사 종류에 맞는 두 개를 sampleImmersionAnswers()로 꺼내 씁니다 */
   immersionAnswers: [1 | 2 | 3, 1 | 2 | 3, 1 | 2 | 3];
   mustGender: 'ANY' | 'SAME';
   mustAge: 'ANY' | 'WITHIN_3' | 'WITHIN_5';
@@ -193,3 +194,9 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     ],
   },
 ];
+
+/** 예시 사용자의 몰입도 답 중 행사 종류에 맞는 두 개 */
+export function sampleImmersionAnswers(p: SamplePerson, category: EventCategory): Array<1 | 2 | 3> {
+  const [q4, q5, q6] = p.immersionAnswers;
+  return category === 'PERFORMANCE' ? [q4, q6] : [q5, q6];
+}

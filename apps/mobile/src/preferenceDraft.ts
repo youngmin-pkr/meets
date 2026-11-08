@@ -2,7 +2,7 @@
  * 입력 흐름(일정 → 템포 → 몰입도 → 필수 조건)에서 고르는 중인 값
  * 화면 코드와 분리해서 테스트합니다.
  */
-import type { AnswerValue, DayPlan, EventDetail, MustConditions, PreferenceInput, PreferenceView, PromiseCode } from '@meets/shared';
+import { IMMERSION_ANSWER_COUNT, type AnswerValue, DayPlan, EventDetail, MustConditions, PreferenceInput, PreferenceView, PromiseCode } from '@meets/shared';
 
 export interface PreferenceDraft {
   /** 고른 날 (EventDay id → 그날 일정) */
@@ -35,14 +35,16 @@ export function initialDraft(event: EventDetail, saved: PreferenceView | null, t
     return {
       days: Object.fromEntries(kept.map((p) => [p.eventDayId, { ...p }])),
       tempoAnswers: [...saved.tempoAnswers],
-      immersionAnswers: [...saved.immersionAnswers],
+      // 예전 방식(질문 3개)으로 저장된 답은 다시 고르게 합니다.
+      immersionAnswers:
+        saved.immersionAnswers.length === IMMERSION_ANSWER_COUNT ? [...saved.immersionAnswers] : [null, null],
       must: { ...saved.must, promises: [...saved.must.promises] },
     };
   }
   return {
     days: days.length === 1 ? { [days[0].id]: defaultPlan(days[0]) } : {},
     tempoAnswers: [null, null, null],
-    immersionAnswers: [null, null, null],
+    immersionAnswers: [null, null],
     must: { gender: 'ANY', age: 'ANY', promises: [] },
   };
 }

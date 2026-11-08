@@ -202,7 +202,7 @@ describe('데모: 입력 흐름과 후보', () => {
   const input = (event: Awaited<ReturnType<typeof ready>>['event'], must = { gender: 'ANY' as const, age: 'ANY' as const, promises: [] as never[] }) => ({
     days: [{ eventDayId: event.days[0].id, arriveTime: event.days[0].startTime, leaveTime: event.days[0].endTime, togetherSegmentIds: event.days[0].segments.map((s) => s.id) }],
     tempoAnswers: [2, 2, 2] as Array<1 | 2 | 3>,
-    immersionAnswers: [2, 2, 2] as Array<1 | 2 | 3>,
+    immersionAnswers: [2, 2] as Array<1 | 2 | 3>,
     must,
   });
 
@@ -300,7 +300,7 @@ describe('데모: 티켓 인증', () => {
     await backend.savePreference(paid.id, {
       days: [{ eventDayId: ev.days[0].id, arriveTime: ev.days[0].startTime, leaveTime: ev.days[0].endTime, togetherSegmentIds: ev.days[0].segments.map((s) => s.id) }],
       tempoAnswers: [2, 2, 2],
-      immersionAnswers: [2, 2, 2],
+      immersionAnswers: [2, 2],
       must: { gender: 'ANY', age: 'ANY', promises: [] },
     });
     const r = await backend.getCandidates(paid.id, { shortTime: true, immersionPlus: true });

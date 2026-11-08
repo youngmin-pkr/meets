@@ -257,8 +257,9 @@ export default function App() {
             onNext={() => setScreen('IMMERSION')}
           />
         )}
-        {screen === 'IMMERSION' && draft && (
+        {screen === 'IMMERSION' && draft && event && (
           <ImmersionScreen
+            category={event.category}
             answers={draft.immersionAnswers}
             onChange={(a) => setDraft({ ...draft, immersionAnswers: a })}
             onBack={() => setScreen('TEMPO')}

@@ -126,7 +126,7 @@ export class MatchingService {
       tempoAnswers: input.tempoAnswers,
       immersionAnswers: input.immersionAnswers,
       tempoLevel: tempoLevel(input.tempoAnswers),
-      immersionLevel: immersionLevel(input.immersionAnswers, event.category),
+      immersionLevel: immersionLevel(input.immersionAnswers),
       mustGender: input.must.gender,
       mustAge: input.must.age,
       promises: input.must.promises,

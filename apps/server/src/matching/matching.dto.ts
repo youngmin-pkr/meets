@@ -69,8 +69,9 @@ export class PreferenceDto {
   @Max(3, { each: true })
   tempoAnswers: AnswerValue[];
 
+  /** 행사 종류에 맞는 질문 2개의 답 */
   @IsArray()
-  @ArrayMaxSize(3)
+  @ArrayMaxSize(2)
   @IsInt({ each: true })
   @Min(1, { each: true })
   @Max(3, { each: true })
