@@ -235,6 +235,44 @@ describe('후보가 적을 때 완화', () => {
   });
 });
 
+describe('티켓 인증과 매칭', () => {
+  test('인증한 사람은 티켓으로 입장할 수 있는 날만 후보로 본다 (1일권)', () => {
+    const me = person({
+      days: [
+        { eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['goods', 'wait', 'show'] },
+        { eventDayId: 'd2', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['goods2', 'wait2', 'show2'] },
+      ],
+    });
+    const oneDayTicket = person({
+      grade: 'VERIFIED',
+      admissibleDayIds: ['d2'],
+      days: me.days,
+    });
+    const r = matchCandidates(me, [oneDayTicket], [DAY1, DAY2], POLICY);
+    expect(r.candidates[0].overlaps.map((o) => o.eventDayId)).toEqual(['d2']);
+    expect(ids(matchCandidates(me, [oneDayTicket], [DAY1, DAY2], POLICY, { dayId: 'd1' }))).toEqual([]);
+  });
+
+  test('같은 순위라면 티켓 인증 → 참석 예정 → 인증 전 순서', () => {
+    const me = person();
+    const none = person();
+    const planned = person({ grade: 'PLANNED' });
+    const verified = person({ grade: 'VERIFIED' });
+    expect(ids(matchCandidates(me, [none, planned, verified], [DAY1], POLICY))).toEqual([
+      verified.userId,
+      planned.userId,
+      none.userId,
+    ]);
+  });
+
+  test('몰입도가 더 가까운 사람이 인증 여부보다 먼저다', () => {
+    const me = person({ immersion: 2 });
+    const closeNone = person({ immersion: 2 });
+    const farVerified = person({ immersion: 3, grade: 'VERIFIED' });
+    expect(ids(matchCandidates(me, [farVerified, closeNone], [DAY1], POLICY))[0]).toBe(closeNone.userId);
+  });
+});
+
 describe('입력 검사와 설명', () => {
   const valid = {
     days: [{ eventDayId: 'd1', arriveTime: '15:00', leaveTime: '21:00', togetherSegmentIds: ['show'] }],

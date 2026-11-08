@@ -26,7 +26,12 @@ export type AppErrorCode =
   | 'APPROVAL_INVALID'
   | 'PREFERENCE_INVALID'
   | 'PREFERENCE_REQUIRED'
-  | 'WAIT_TOO_LATE';
+  | 'WAIT_TOO_LATE'
+  | 'TICKET_INVALID'
+  | 'TICKET_STATE'
+  | 'IMAGE_INVALID'
+  | 'IMAGE_TOO_LARGE'
+  | 'PLAN_NOT_ALLOWED';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -53,6 +58,11 @@ const STATUS: Record<AppErrorCode, number> = {
   PREFERENCE_INVALID: 400,
   PREFERENCE_REQUIRED: 409,
   WAIT_TOO_LATE: 409,
+  TICKET_INVALID: 400,
+  TICKET_STATE: 409,
+  IMAGE_INVALID: 400,
+  IMAGE_TOO_LARGE: 413,
+  PLAN_NOT_ALLOWED: 409,
 };
 
 export class AppError extends Error {

@@ -123,7 +123,8 @@ export interface SamplePerson {
   /** 샘플 팬덤 이름 중 고른 것 */
   fandoms: string[];
   fandomPublic: boolean;
-  plans: Array<{ event: number; days: number[]; arrive: string; leave: string; together: number[] }>;
+  /** ticket: 티켓 인증(VERIFIED, 고른 날 모두 입장 가능) / 참석 예정(PLANNED, 티켓이 필요 없는 행사만) */
+  plans: Array<{ event: number; days: number[]; arrive: string; leave: string; together: number[]; ticket?: 'VERIFIED' | 'PLANNED' }>;
 }
 
 export const SAMPLE_PEOPLE: SamplePerson[] = [
@@ -132,7 +133,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     tempoAnswers: [2, 1, 2], immersionAnswers: [2, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
     promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드'], fandomPublic: true,
     plans: [
-      { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2] },
+      { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2], ticket: 'VERIFIED' },
       { event: 3, days: [0, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
     ],
   },
@@ -142,7 +143,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     promises: ['PUNCTUAL', 'PHOTO_CONSENT'], fandoms: [], fandomPublic: false,
     plans: [
       { event: 0, days: [0], arrive: '17:00', leave: '21:00', together: [1, 2] },
-      { event: 1, days: [0, 1], arrive: '10:30', leave: '17:00', together: [0, 1] },
+      { event: 1, days: [0, 1], arrive: '10:30', leave: '17:00', together: [0, 1], ticket: 'PLANNED' },
     ],
   },
   {
@@ -150,7 +151,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     tempoAnswers: [3, 2, 2], immersionAnswers: [1, 2, 1], mustGender: 'ANY', mustAge: 'ANY',
     promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'NO_ALCOHOL_SMOKING', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드', '테스트 페스티벌'], fandomPublic: false,
     plans: [
-      { event: 0, days: [0], arrive: '15:00', leave: '18:00', together: [0, 1] },
+      { event: 0, days: [0], arrive: '15:00', leave: '18:00', together: [0, 1], ticket: 'VERIFIED' },
       { event: 3, days: [0, 1, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
     ],
   },
@@ -159,7 +160,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     tempoAnswers: [1, 1, 1], immersionAnswers: [2, 3, 2], mustGender: 'SAME', mustAge: 'WITHIN_5',
     promises: ['PUNCTUAL'], fandoms: ['테스트 전시 시리즈'], fandomPublic: true,
     plans: [
-      { event: 2, days: [0, 1], arrive: '10:00', leave: '16:00', together: [0] },
+      { event: 2, days: [0, 1], arrive: '10:00', leave: '16:00', together: [0], ticket: 'VERIFIED' },
       { event: 1, days: [2], arrive: '13:00', leave: '20:00', together: [1] },
     ],
   },
@@ -168,7 +169,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     tempoAnswers: [3, 3, 3], immersionAnswers: [3, 1, 3], mustGender: 'ANY', mustAge: 'WITHIN_5',
     promises: [], fandoms: ['테스트 페스티벌'], fandomPublic: true,
     plans: [
-      { event: 3, days: [0, 1, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },
+      { event: 3, days: [0, 1, 2], arrive: '12:00', leave: '22:00', together: [0, 1], ticket: 'VERIFIED' },
       { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2] },
     ],
   },
@@ -177,7 +178,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
     tempoAnswers: [2, 2, 3], immersionAnswers: [2, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
     promises: ['PUNCTUAL', 'PHOTO_CONSENT'], fandoms: ['테스트 아티스트 A'], fandomPublic: false,
     plans: [
-      { event: 1, days: [0], arrive: '10:30', leave: '20:00', together: [0, 1] },
+      { event: 1, days: [0], arrive: '10:30', leave: '20:00', together: [0, 1], ticket: 'PLANNED' },
       { event: 2, days: [0], arrive: '10:00', leave: '19:00', together: [0] },
       { event: 0, days: [0], arrive: '16:00', leave: '21:00', together: [2] },
     ],

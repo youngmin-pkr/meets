@@ -7,6 +7,8 @@
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
 import type {
+  MyTicketStatus,
+  TicketConfirmResult,
   AgreedTerm,
   CandidateDetail,
   CandidatesResponse,
@@ -90,6 +92,14 @@ function createHttpBackend(baseUrl: string): Backend {
         `/events/${encodeURIComponent(eventId)}/wait-registrations`,
         { includeImmersionPlus },
       ),
+    getTicketStatus: (eventId) => call<MyTicketStatus>('GET', `/events/${encodeURIComponent(eventId)}/ticket`),
+    startTicket: (eventId, kind) =>
+      call<{ id: string; status: string }>('POST', `/events/${encodeURIComponent(eventId)}/tickets`, { kind }),
+    uploadTicketImage: (id, imageBase64, mimeType, masks) =>
+      call<{ id: string; status: string }>('POST', `/tickets/${encodeURIComponent(id)}/image`, { imageBase64, mimeType, masks }),
+    confirmTicket: (id, reservationNumber, admissibleDayIds) =>
+      call<TicketConfirmResult>('POST', `/tickets/${encodeURIComponent(id)}/confirm`, { reservationNumber, admissibleDayIds }),
+    planAttendance: (eventId) => call<MyTicketStatus>('POST', `/events/${encodeURIComponent(eventId)}/attendance-plan`),
   };
 }
 

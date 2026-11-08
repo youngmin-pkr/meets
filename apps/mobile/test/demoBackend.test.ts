@@ -244,3 +244,66 @@ describe('데모: 입력 흐름과 후보', () => {
     expect(r.endsOn < event.days[0].date).toBe(true);
   });
 });
+
+describe('데모: 티켓 인증', () => {
+  async function member(person: string) {
+    const backend = createDemoBackend({ now: NOW });
+    return backend;
+  }
+  async function signIn(backend: ReturnType<typeof createDemoBackend>, person: string) {
+    const r = await backend.verifyIdentity(`fake:${person}:2000-01-01:F`, ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP' && r.outcome !== 'LOGGED_IN') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    if (r.outcome === 'SIGNED_UP') {
+      await backend.updateProfile(`데모${person}`, 'ink');
+      await backend.setFandoms([], false);
+      await backend.setNotificationChoice(false);
+    }
+  }
+
+  test('올리고 확인하면 인증 완료, 같은 번호를 다른 사람이 쓰면 확인 대기', async () => {
+    const backend = await member('x');
+    await signIn(backend, 'a');
+    const [concert] = await backend.listEvents({});
+    const t1 = await backend.startTicket(concert.id, 'TICKET');
+    await backend.uploadTicketImage(t1.id, 'AAAA', 'image/jpeg', [{ x: 0, y: 0, w: 0.5, h: 0.2 }]);
+    expect((await backend.confirmTicket(t1.id, 'T1234', [])).status).toBe('VERIFIED');
+    expect((await backend.getTicketStatus(concert.id)).grade).toBe('VERIFIED');
+
+    await signIn(backend, 'b');
+    const t2 = await backend.startTicket(concert.id, 'TICKET');
+    await backend.uploadTicketImage(t2.id, 'AAAA', 'image/jpeg', []);
+    expect(await backend.confirmTicket(t2.id, 't-1234', [])).toMatchObject({ status: 'REVIEW_PENDING', checks: { notUsedElsewhere: false } });
+  });
+
+  test('잘못된 이미지·가린 영역·예매번호는 거절', async () => {
+    const backend = await member('x');
+    await signIn(backend, 'a');
+    const [concert] = await backend.listEvents({});
+    const t = await backend.startTicket(concert.id, 'TICKET');
+    await expect(backend.uploadTicketImage(t.id, 'AAAA', 'image/gif', [])).rejects.toMatchObject({ code: 'IMAGE_INVALID' });
+    await expect(backend.uploadTicketImage(t.id, 'AAAA', 'image/png', [{ x: 0.9, y: 0, w: 0.5, h: 0.1 }])).rejects.toMatchObject({ code: 'IMAGE_INVALID' });
+    await backend.uploadTicketImage(t.id, 'AAAA', 'image/png', []);
+    await expect(backend.confirmTicket(t.id, '12', [])).rejects.toMatchObject({ code: 'TICKET_INVALID' });
+  });
+
+  test("'참석 예정'은 티켓이 필요 없는 행사에서만, 예시 사용자 중 인증한 사람은 배지가 있다", async () => {
+    const backend = await member('x');
+    await signIn(backend, 'a');
+    const list = await backend.listEvents({});
+    const paid = list.find((e) => e.ticketRequired)!;
+    const free = list.find((e) => !e.ticketRequired)!;
+    await expect(backend.planAttendance(paid.id)).rejects.toMatchObject({ code: 'PLAN_NOT_ALLOWED' });
+    expect((await backend.planAttendance(free.id)).grade).toBe('PLANNED');
+
+    const ev = await backend.getEvent(paid.id);
+    await backend.savePreference(paid.id, {
+      days: [{ eventDayId: ev.days[0].id, arriveTime: ev.days[0].startTime, leaveTime: ev.days[0].endTime, togetherSegmentIds: ev.days[0].segments.map((s) => s.id) }],
+      tempoAnswers: [2, 2, 2],
+      immersionAnswers: [2, 2, 2],
+      must: { gender: 'ANY', age: 'ANY', promises: [] },
+    });
+    const r = await backend.getCandidates(paid.id, { shortTime: true, immersionPlus: true });
+    expect(r.candidates.some((c) => c.grade === 'VERIFIED')).toBe(true);
+  });
+});

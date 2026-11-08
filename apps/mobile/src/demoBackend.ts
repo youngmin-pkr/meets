@@ -6,6 +6,12 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  isValidMask,
+  normalizeReservationNumber,
+  type MyTicketStatus,
+  type TicketFailReason,
+  type TicketKind,
+  type TicketStatus,
   checkPreference,
   describeCandidate,
   expectedCounts,
@@ -176,6 +182,25 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
   /** 사용자 id|행사 id → 입력 흐름 결과 */
   const preferences = new Map<string, PreferenceView>();
   const waits = new Map<string, { endsOn: string; includeImmersionPlus: boolean }>();
+  /** 데모 티켓 인증 (이미지는 저장하지 않고, 사람 검수 없이 바로 인증) */
+  const tickets = new Map<
+    string,
+    { userId: string; eventId: string; kind: TicketKind; status: TicketStatus; hash: string | null; admissibleDayIds: string[]; failReason: TicketFailReason | null; createdAt: number }
+  >();
+  const plans = new Set<string>();
+  let ticketSeq = 0;
+
+  function latestTicket(userId: string, eventId: string) {
+    return [...tickets.entries()]
+      .filter(([, t]) => t.userId === userId && t.eventId === eventId)
+      .sort((a, b) => b[1].createdAt - a[1].createdAt)[0];
+  }
+
+  function gradeOf(userId: string, eventId: string): 'VERIFIED' | 'PLANNED' | null {
+    const t = latestTicket(userId, eventId);
+    if (t?.[1].status === 'VERIFIED') return 'VERIFIED';
+    return plans.has(`${userId}|${eventId}`) ? 'PLANNED' : null;
+  }
   const fandomIdByName = new Map(DEMO_FANDOMS.map((f) => [f.name, f.id]));
 
   /** 데모 행사 (사용자에게 보이는 것만) */
@@ -216,6 +241,8 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
           immersion: immersionLevel(p.immersionAnswers, event.category),
           must: { gender: p.mustGender, age: p.mustAge, promises: p.promises },
           fandomIds: p.fandoms.map((n) => fandomIdByName.get(n)).filter((x): x is string => !!x),
+          grade: plan.ticket === 'VERIFIED' ? 'VERIFIED' : plan.ticket === 'PLANNED' && !event.ticketRequired ? 'PLANNED' : null,
+          admissibleDayIds: plan.ticket === 'VERIFIED' ? plan.days.map((i) => event.days[i]?.id).filter((x): x is string => !!x) : null,
           days: plan.days
             .filter((i) => event.days[i])
             .map((i) => ({
@@ -238,6 +265,8 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
           immersion: pref.immersionLevel,
           must: pref.must,
           fandomIds: u.fandomIds,
+          grade: gradeOf(u.id, eventId),
+          admissibleDayIds: latestTicket(u.id, eventId)?.[1].status === 'VERIFIED' ? latestTicket(u.id, eventId)![1].admissibleDayIds : null,
           days: pref.days,
         };
       });
@@ -249,6 +278,7 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
     const demoUser = users.find((u) => u.id === c.userId);
     return {
       userId: c.userId,
+      grade: c.grade,
       nickname: sample?.nickname ?? demoUser?.nickname ?? '',
       avatarInitial: sample?.avatarInitial ?? (demoUser?.nickname ? avatarInitial(demoUser.nickname) : ''),
       avatarColor:
@@ -503,6 +533,87 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       const result = { endsOn, includeImmersionPlus };
       waits.set(`${user.id}|${eventId}`, result);
       return delay(result);
+    },
+
+    async getTicketStatus(eventId): Promise<MyTicketStatus> {
+      const user = currentUser();
+      const { event } = visibleEvent(eventId);
+      const t = latestTicket(user.id, eventId);
+      return delay({
+        verification: t
+          ? { id: t[0], kind: t[1].kind, status: t[1].status, failReason: t[1].failReason, admissibleDayIds: t[1].admissibleDayIds }
+          : null,
+        grade: gradeOf(user.id, eventId),
+        canPlanWithoutTicket: !event.ticketRequired,
+      });
+    },
+
+    async startTicket(eventId, kind) {
+      const user = currentUser();
+      visibleEvent(eventId);
+      const t = latestTicket(user.id, eventId);
+      if (t && ['REVIEW_PENDING', 'VERIFIED', 'REVERIFYING'].includes(t[1].status)) {
+        throw new ApiError('TICKET_STATE', '이미 인증했거나 확인 중이에요.');
+      }
+      const id = `demo-ticket-${++ticketSeq}`;
+      tickets.set(id, { userId: user.id, eventId, kind, status: 'STARTED', hash: null, admissibleDayIds: [], failReason: null, createdAt: ticketSeq });
+      return delay({ id, status: 'STARTED' });
+    },
+
+    async uploadTicketImage(id, imageBase64, mimeType, masks) {
+      const user = currentUser();
+      const t = tickets.get(id);
+      if (!t || t.userId !== user.id) throw new ApiError('NOT_FOUND', '인증을 찾을 수 없어요.');
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType) || !imageBase64) {
+        throw new ApiError('IMAGE_INVALID', 'JPG, PNG, WEBP 이미지만 올릴 수 있어요.');
+      }
+      if (!masks.every(isValidMask)) throw new ApiError('IMAGE_INVALID', '가린 영역을 다시 확인해 주세요.');
+      if (imageBase64.length * 0.75 > POLICY_DEFAULTS.TICKET_IMAGE_MAX_MB * 1024 * 1024) {
+        throw new ApiError('IMAGE_TOO_LARGE', `이미지는 ${POLICY_DEFAULTS.TICKET_IMAGE_MAX_MB}MB까지 올릴 수 있어요.`);
+      }
+      // 데모에서는 이미지를 저장하지 않습니다.
+      if (t.status === 'STARTED') t.status = 'UPLOADED';
+      return delay({ id, status: t.status });
+    },
+
+    async confirmTicket(id, rawNumber, admissibleDayIds) {
+      const user = currentUser();
+      const t = tickets.get(id);
+      if (!t || t.userId !== user.id) throw new ApiError('NOT_FOUND', '인증을 찾을 수 없어요.');
+      if (t.status !== 'UPLOADED') throw new ApiError('TICKET_STATE', '먼저 캡처를 올려 주세요.');
+      const { event } = visibleEvent(t.eventId);
+      const number = normalizeReservationNumber(rawNumber);
+      if (!number) throw new ApiError('TICKET_INVALID', '예매번호를 다시 확인해 주세요.', { field: 'reservationNumber' });
+      const dayIds = event.days.length === 1 ? [event.days[0].id] : [...new Set(admissibleDayIds)];
+      if (dayIds.length === 0 || !dayIds.every((d) => event.days.some((x) => x.id === d))) {
+        throw new ApiError('TICKET_INVALID', '입장할 수 있는 날을 골라 주세요.', { field: 'admissibleDayIds' });
+      }
+      const today = isoOf(todayInSeoul(now()));
+      const notPast = event.days.some((d) => dayIds.includes(d.id) && d.date >= today);
+      const hash = `${t.eventId}:${number}`;
+      const usedElsewhere = [...tickets.values()].some((x) => x.hash === hash && x.userId !== user.id && x.status === 'VERIFIED');
+      t.hash = hash;
+      t.admissibleDayIds = dayIds;
+      if (!notPast) {
+        t.status = 'FAILED';
+        t.failReason = 'WRONG_EVENT';
+      } else {
+        // 데모에서는 무작위 점검 없이, 중복 의심일 때만 사람이 확인하는 것으로 둡니다.
+        t.status = usedElsewhere ? 'REVIEW_PENDING' : 'VERIFIED';
+      }
+      return delay({
+        status: t.status as 'VERIFIED' | 'REVIEW_PENDING' | 'FAILED',
+        failReason: t.failReason,
+        checks: { sameEvent: true, notPast, notUsedElsewhere: !usedElsewhere },
+      });
+    },
+
+    async planAttendance(eventId) {
+      const user = currentUser();
+      const { event } = visibleEvent(eventId);
+      if (event.ticketRequired) throw new ApiError('PLAN_NOT_ALLOWED', '티켓이 필요한 행사는 티켓 인증을 해 주세요.');
+      plans.add(`${user.id}|${eventId}`);
+      return this.getTicketStatus(eventId);
     },
   };
 }

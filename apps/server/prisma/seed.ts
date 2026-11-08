@@ -94,6 +94,26 @@ async function main() {
         include: { days: { orderBy: { date: 'asc' }, include: { segments: { orderBy: { sortOrder: 'asc' } } } } },
       });
       if (!event) continue;
+      const dayIds = plan.days.map((i) => event.days[i]?.id).filter((x): x is string => !!x);
+      if (plan.ticket === 'VERIFIED') {
+        // 예시 사용자의 티켓 인증 (이미지 없이 결과만, 예매번호도 지어낸 값)
+        const hash = createHmac('sha256', secret).update(`ticket:${event.id}:SAMPLE${p.key.toUpperCase()}`).digest('hex');
+        await prisma.ticketVerification.create({
+          data: {
+            userId: user.id,
+            eventId: event.id,
+            kind: 'TICKET',
+            status: 'VERIFIED',
+            reservationHash: hash,
+            admissibleDayIds: dayIds,
+            decidedAt: now,
+            imageDeletedAt: now,
+            hashOwner: { create: { hash } },
+          },
+        });
+      } else if (plan.ticket === 'PLANNED' && !event.ticketRequired) {
+        await prisma.attendancePlan.create({ data: { userId: user.id, eventId: event.id } });
+      }
       await prisma.preference.create({
         data: {
           userId: user.id,

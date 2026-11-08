@@ -18,8 +18,8 @@ export class TestClock implements Clock {
 
 export const ALL_TERMS = TERMS.map((t) => ({ code: t.code, version: t.version }));
 
-export async function startApp(clock: Clock = new TestClock(), logger?: false) {
-  const app = await createApp(loadConfig(), { clock, logger: logger ?? false });
+export async function startApp(clock: Clock = new TestClock(), logger?: false, random?: () => number) {
+  const app = await createApp(loadConfig(), { clock, logger: logger ?? false, random });
   await app.init();
   return app;
 }
@@ -27,7 +27,7 @@ export async function startApp(clock: Clock = new TestClock(), logger?: false) {
 export async function resetDb(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "WaitRegistration","PreferenceDay","Preference","AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
+    'TRUNCATE "TicketHash","TicketImage","TicketVerification","AttendancePlan","WaitRegistration","PreferenceDay","Preference","AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
   );
 }
 

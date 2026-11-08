@@ -31,6 +31,16 @@ export interface MatchProfile {
   must: MustConditions;
   fandomIds: string[];
   days: Array<{ eventDayId: string; arriveTime: string; leaveTime: string; togetherSegmentIds: string[] }>;
+  /** 티켓 인증 / 참석 예정 / 없음 */
+  grade?: 'VERIFIED' | 'PLANNED' | null;
+  /** 티켓으로 입장할 수 있는 날. 인증한 사람은 이 날만 후보로 봅니다. (없으면 제한 없음) */
+  admissibleDayIds?: string[] | null;
+}
+
+/** 티켓으로 입장할 수 있는 날만 남긴 일정 (정리문서 3장 여러 날 행사) */
+export function effectiveDays(p: MatchProfile): MatchProfile['days'] {
+  if (!p.admissibleDayIds) return p.days;
+  return p.days.filter((d) => p.admissibleDayIds!.includes(d.eventDayId));
 }
 
 export interface MatchPolicy {
@@ -68,6 +78,7 @@ export interface DayOverlap {
 
 export interface MatchCandidate {
   userId: string;
+  grade: 'VERIFIED' | 'PLANNED' | null;
   tempoGap: number;
   immersionGap: number;
   sameFan: boolean;
@@ -100,8 +111,8 @@ export function passesMust(viewer: MatchProfile, other: MatchProfile): boolean {
 
 /** 한 날의 '같이' 시간 겹침. 구간이 없는 날은 행사 시간 전체를 하나의 구간으로 봅니다. */
 export function overlapOnDay(day: MatchDay, a: MatchProfile, b: MatchProfile): DayOverlap | null {
-  const pa = a.days.find((d) => d.eventDayId === day.id);
-  const pb = b.days.find((d) => d.eventDayId === day.id);
+  const pa = effectiveDays(a).find((d) => d.eventDayId === day.id);
+  const pb = effectiveDays(b).find((d) => d.eventDayId === day.id);
   if (!pa || !pb) return null;
   const windowStart = Math.max(toMinutes(pa.arriveTime), toMinutes(pb.arriveTime));
   const windowEnd = Math.min(toMinutes(pa.leaveTime), toMinutes(pb.leaveTime));
@@ -151,7 +162,7 @@ function narrowed(
   options: MatchOptions,
 ) {
   const myDays = days.filter(
-    (d) => viewer.days.some((p) => p.eventDayId === d.id) && (!options.dayId || d.id === options.dayId),
+    (d) => effectiveDays(viewer).some((p) => p.eventDayId === d.id) && (!options.dayId || d.id === options.dayId),
   );
   const minOverlap = options.shortTime ? policy.shortOverlapMinutes : policy.minOverlapMinutes;
   const viewerFans = new Set(viewer.fandomIds);
@@ -175,6 +186,7 @@ function narrowed(
     .filter(({ overlaps }) => overlaps.length > 0)
     .map(({ o, overlaps }) => ({
       userId: o.userId,
+      grade: o.grade ?? null,
       tempoGap: Math.abs(o.tempo - viewer.tempo),
       immersionGap: Math.abs(o.immersion - viewer.immersion),
       sameFan: viewerFans.size > 0 && o.fandomIds.some((f) => viewerFans.has(f)),
@@ -184,6 +196,8 @@ function narrowed(
     }));
 }
 
+const gradeRank = (g: MatchCandidate['grade']) => (g === 'VERIFIED' ? 0 : g === 'PLANNED' ? 1 : 2);
+
 function sortCandidates(list: MatchCandidate[], sort: MatchOptions['sort']): MatchCandidate[] {
   return [...list].sort((a, b) => {
     if (sort === 'OVERLAP') {
@@ -192,6 +206,7 @@ function sortCandidates(list: MatchCandidate[], sort: MatchOptions['sort']): Mat
     return (
       a.immersionGap - b.immersionGap || // 3단계: 몰입도가 가까운 순
       Number(b.sameFan) - Number(a.sameFan) || // 4단계: 같은 순위면 같은 팬 먼저
+      gradeRank(a.grade) - gradeRank(b.grade) || // 그다음 티켓 인증 → 참석 예정 → 인증 전 (사용자 결정)
       b.bestOverlapMinutes - a.bestOverlapMinutes ||
       a.tempoGap - b.tempoGap ||
       a.userId.localeCompare(b.userId)
@@ -238,14 +253,14 @@ export function expectedCounts(
   const immersionPlus = matchCandidates(viewer, others, days, policy, { ...options, immersionPlus: true }).candidates.length;
   // 다른 날짜: 내가 고르지 않은 날에 등록했고, 필수 조건·템포가 맞는 사람 수
   const otherDays = days
-    .filter((d) => !viewer.days.some((p) => p.eventDayId === d.id))
+    .filter((d) => !effectiveDays(viewer).some((p) => p.eventDayId === d.id))
     .map((d) => ({
       eventDayId: d.id,
       date: d.date,
       people: others.filter(
         (o) =>
           o.userId !== viewer.userId &&
-          o.days.some((p) => p.eventDayId === d.id) &&
+          effectiveDays(o).some((p) => p.eventDayId === d.id) &&
           passesMust(viewer, o) &&
           Math.abs(o.tempo - viewer.tempo) <= policy.tempoMaxGap,
       ).length,
@@ -266,6 +281,7 @@ export function describeCandidate(c: Pick<MatchCandidate, 'tempoGap' | 'immersio
 /** 후보 카드 (앱이 받는 모양) */
 export interface CandidateCard {
   userId: string;
+  grade: 'VERIFIED' | 'PLANNED' | null;
   nickname: string;
   avatarInitial: string;
   avatarColor: string;

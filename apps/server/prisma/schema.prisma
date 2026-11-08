@@ -55,6 +55,8 @@ model User {
   eventReports EventReport[]
   preferences  Preference[]
   waitRegistrations WaitRegistration[]
+  ticketVerifications TicketVerification[]
+  attendancePlans     AttendancePlan[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -184,6 +186,8 @@ model Event {
   reports       EventReport[]
   preferences   Preference[]
   waitRegistrations WaitRegistration[]
+  ticketVerifications TicketVerification[]
+  attendancePlans     AttendancePlan[]
 
   @@index([status])
 }
@@ -353,4 +357,80 @@ model WaitRegistration {
   event      Event     @relation(fields: [eventId], references: [id])
 
   @@unique([userId, eventId])
+}
+
+// ───────────── 6단계: 티켓 인증 ─────────────
+
+enum TicketKind {
+  TICKET
+  RESERVATION
+}
+
+/// 티켓 인증 상태 (정리문서 5장 "티켓 인증")
+enum TicketStatus {
+  STARTED
+  UPLOADED
+  CONFIRMED
+  REVIEW_PENDING
+  VERIFIED
+  FAILED
+  REVERIFYING
+}
+
+/// 티켓 인증. 예매번호 원문과 원본 이미지는 저장하지 않습니다.
+model TicketVerification {
+  id               String        @id @default(uuid())
+  userId           String
+  eventId          String
+  kind             TicketKind
+  status           TicketStatus
+  /// 예매번호 해시 (행사 + 번호). 원문은 저장하지 않음
+  reservationHash  String?
+  /// 티켓으로 입장할 수 있는 날 (EventDay id)
+  admissibleDayIds String[]
+  /// 사람이 검수하는 이유: DUPLICATE_SUSPECT | REPORTED | LOW_CONFIDENCE | RANDOM
+  reviewReason     String?
+  /// 실패 이유: UNREADABLE | WRONG_EVENT | DUPLICATE | OTHER
+  failReason       String?
+  /// 가린 이미지를 지운 시각
+  imageDeletedAt   DateTime?
+  reviewerId       String?
+  heldAt           DateTime?
+  decidedAt        DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  user             User          @relation(fields: [userId], references: [id])
+  event            Event         @relation(fields: [eventId], references: [id])
+  image            TicketImage?
+  hashOwner        TicketHash?
+
+  @@index([userId, eventId])
+  @@index([status])
+}
+
+/// 가린 캡처 이미지. 확인이 끝나면 바로 지웁니다. (원본은 저장하지 않음)
+model TicketImage {
+  verificationId String             @id
+  data           Bytes
+  mimeType       String
+  createdAt      DateTime           @default(now())
+  verification   TicketVerification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+}
+
+/// 예매번호 해시의 주인 (같은 예매번호는 여러 계정이 못 씀)
+model TicketHash {
+  hash           String             @id
+  verificationId String             @unique
+  verification   TicketVerification @relation(fields: [verificationId], references: [id], onDelete: Cascade)
+}
+
+/// 티켓이 필요 없는 행사의 '참석 예정'
+model AttendancePlan {
+  userId    String
+  eventId   String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+  event     Event    @relation(fields: [eventId], references: [id])
+
+  @@id([userId, eventId])
 }

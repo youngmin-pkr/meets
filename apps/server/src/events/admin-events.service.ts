@@ -17,6 +17,9 @@ const fullInclude = {
   },
 } satisfies Prisma.EventInclude;
 
+/** 두 명 확인 작업(AdminApproval)의 상태. 행사·티켓 상태와 이름이 겹쳐서 상수로 씁니다. */
+const APPROVAL = { PENDING: 'PENDING', CONFIRMED: 'CONFIRMED' } as const;
+
 /** 행사가 바뀌면 영향을 받는 약속 수. 약속은 4단계에서 생깁니다. */
 // TODO(4단계): 이 행사의 진행 중 약속 수를 세고, 저장 후 '다시 정하기'로 바꾸고 안내합니다.
 const affectedAppointmentCount = async (_eventId: string) => 0;
@@ -216,7 +219,7 @@ export class AdminEventsService {
       throw new AppError('INVALID_TRANSITION', '등록된 행사만 취소할 수 있어요.');
     }
     const pending = await this.prisma.adminApproval.findFirst({
-      where: { kind: 'EVENT_CANCEL', targetId: id, status: 'PENDING' },
+      where: { kind: 'EVENT_CANCEL', targetId: id, status: APPROVAL.PENDING },
     });
     if (pending) throw new AppError('APPROVAL_INVALID', '이미 취소 제안이 있어요.');
     return this.prisma.$transaction(async (tx) => {
@@ -246,8 +249,8 @@ export class AdminEventsService {
         approval: { proposedBy: approval.proposedById, confirmedBy: adminId },
       });
       const done = await tx.adminApproval.updateMany({
-        where: { id: approvalId, status: 'PENDING' },
-        data: { status: 'CONFIRMED', confirmedById: adminId, decidedAt: new Date() },
+        where: { id: approvalId, status: APPROVAL.PENDING },
+        data: { status: APPROVAL.CONFIRMED, confirmedById: adminId, decidedAt: new Date() },
       });
       if (done.count !== 1) throw new AppError('APPROVAL_INVALID', '이미 처리된 제안이에요.');
       await this.audit.record(
