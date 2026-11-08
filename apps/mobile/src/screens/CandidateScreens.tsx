@@ -14,11 +14,13 @@ import {
   type CandidatesResponse,
   type EventDetail,
   type MatchOptions,
+  type ProposalView,
 } from '@meets/shared';
 import { api } from '../api';
 import { colors } from '../theme';
 import { Body, Card, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
 import { EventStrip } from './InputFlowScreens';
+import { ProposalComposer } from './ProposalScreens';
 
 const shortDate = (iso: string) => {
   const { month, day, weekday } = describeEventDate(iso);
@@ -291,6 +293,7 @@ export function CandidateDetailScreen(props: {
   myGrade: AttendanceGrade | null;
   onVerify: () => void;
   onBack: () => void;
+  onSent: (p: ProposalView) => void;
 }) {
   const [detail, setDetail] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -309,23 +312,14 @@ export function CandidateDetailScreen(props: {
   return (
     <Page
       footer={
-        <>
-          {props.myGrade === 'VERIFIED' ? (
-            <>
-              <PrimaryButton label="이 구간으로 제안 보내기" onPress={() => undefined} disabled />
-              <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
-                제안 보내기는 다음 단계에서 열려요.
-              </Text>
-            </>
-          ) : (
-            <>
-              <PrimaryButton label="티켓 인증하고 제안하기" onPress={props.onVerify} />
-              <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
-                제안은 같은 행사 티켓 인증을 마친 뒤 보낼 수 있어요.
-              </Text>
-            </>
-          )}
-        </>
+        props.myGrade ? undefined : (
+          <>
+            <PrimaryButton label="티켓 인증하고 제안하기" onPress={props.onVerify} />
+            <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
+              제안은 같은 행사 티켓 인증을 마친 뒤 보낼 수 있어요.
+            </Text>
+          </>
+        )
       }
     >
       <TopBar label="후보 상세" onBack={props.onBack} />
@@ -357,6 +351,9 @@ export function CandidateDetailScreen(props: {
         </Card>
       ) : null}
       {!detail && !error ? <Body>불러오는 중이에요…</Body> : null}
+      {detail && props.myGrade ? (
+        <ProposalComposer event={props.event} candidate={detail} myGrade={props.myGrade} onSent={props.onSent} />
+      ) : null}
       <ErrorText message={error} />
     </Page>
   );

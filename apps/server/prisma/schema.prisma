@@ -57,6 +57,9 @@ model User {
   waitRegistrations WaitRegistration[]
   ticketVerifications TicketVerification[]
   attendancePlans     AttendancePlan[]
+  sentProposals       Proposal[] @relation("ProposalSender")
+  receivedProposals   Proposal[] @relation("ProposalReceiver")
+  appointmentParticipations AppointmentParticipant[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -189,6 +192,9 @@ model Event {
   ticketVerifications TicketVerification[]
   attendancePlans     AttendancePlan[]
 
+  proposals           Proposal[]
+  appointments        Appointment[]
+
   @@index([status])
 }
 
@@ -202,6 +208,8 @@ model EventDay {
   event     Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   segments  EventSegment[]
   preferenceDays PreferenceDay[]
+  proposals      Proposal[]
+  appointments   Appointment[]
 
   @@unique([eventId, date])
 }
@@ -225,6 +233,8 @@ model MeetingSpot {
   /// 공개된 장소인지. 공개된 장소만 사용자에게 보여 줍니다.
   isPublicPlace Boolean
   event        Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  proposals    Proposal[]
+  appointments Appointment[]
 }
 
 /// 사용자 제보. 같은 행사(같은 공식 링크)의 제보는 하나의 Event에 합칩니다.
@@ -433,4 +443,95 @@ model AttendancePlan {
   event     Event    @relation(fields: [eventId], references: [id])
 
   @@id([userId, eventId])
+}
+
+// ───────────── 3-2단계: 제안과 약속 ─────────────
+
+/// 제안 상태 (정리문서 5장 "제안")
+enum ProposalStatus {
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  CANCELLED
+}
+
+/// 제안 종류: 일반 / 즉석 / 청소년 그룹 (지금은 일반만)
+enum ProposalKind {
+  NORMAL
+  INSTANT
+  TEEN_GROUP
+}
+
+model Proposal {
+  id            String         @id @default(uuid())
+  kind          ProposalKind   @default(NORMAL)
+  senderId      String
+  receiverId    String
+  eventId       String
+  eventDayId    String
+  /// 함께할 구간 (EventSegment id). 구간이 없는 날은 빈 목록
+  segmentIds    String[]
+  meetingSpotId String
+  status        ProposalStatus
+  expiresAt     DateTime
+  respondedAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  sender        User           @relation("ProposalSender", fields: [senderId], references: [id])
+  receiver      User           @relation("ProposalReceiver", fields: [receiverId], references: [id])
+  event         Event          @relation(fields: [eventId], references: [id])
+  eventDay      EventDay       @relation(fields: [eventDayId], references: [id])
+  meetingSpot   MeetingSpot    @relation(fields: [meetingSpotId], references: [id])
+  appointment   Appointment?
+
+  @@index([receiverId, status])
+  @@index([senderId, status])
+}
+
+/// 약속 상태 (정리문서 5장 "약속"). 상태 바꾸기는 4단계에서 만듭니다.
+enum AppointmentStatus {
+  PENDING_CONFIRM
+  CONFIRMED
+  IN_PROGRESS
+  ENDED
+  ENDED_EARLY
+  CANCELLED
+  RESCHEDULING
+  ON_HOLD
+  AUTO_ENDED
+}
+
+/// 약속. 제안이 수락되면 '확정 대기'로 만들어집니다.
+model Appointment {
+  id            String                   @id @default(uuid())
+  proposalId    String                   @unique
+  eventId       String
+  eventDayId    String
+  segmentIds    String[]
+  meetingSpotId String
+  status        AppointmentStatus
+  confirmedAt   DateTime?
+  endReason     String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+  proposal      Proposal                 @relation(fields: [proposalId], references: [id])
+  event         Event                    @relation(fields: [eventId], references: [id])
+  eventDay      EventDay                 @relation(fields: [eventDayId], references: [id])
+  meetingSpot   MeetingSpot              @relation(fields: [meetingSpotId], references: [id])
+  participants  AppointmentParticipant[]
+}
+
+/// 약속에 참여하는 사람. 전날 확인·도착 기록·취소는 4단계에서 씁니다.
+model AppointmentParticipant {
+  appointmentId        String
+  userId               String
+  dayBeforeConfirmedAt DateTime?
+  arrivedAt            DateTime?
+  cancelledAt          DateTime?
+  lateCancel           Boolean?
+  appointment          Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  user                 User        @relation(fields: [userId], references: [id])
+
+  @@id([appointmentId, userId])
 }

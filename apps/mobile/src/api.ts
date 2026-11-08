@@ -7,6 +7,8 @@
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
 import type {
+  AppointmentView,
+  ProposalView,
   MyTicketStatus,
   TicketConfirmResult,
   AgreedTerm,
@@ -100,6 +102,12 @@ function createHttpBackend(baseUrl: string): Backend {
     confirmTicket: (id, reservationNumber, admissibleDayIds) =>
       call<TicketConfirmResult>('POST', `/tickets/${encodeURIComponent(id)}/confirm`, { reservationNumber, admissibleDayIds }),
     planAttendance: (eventId) => call<MyTicketStatus>('POST', `/events/${encodeURIComponent(eventId)}/attendance-plan`),
+    sendProposal: (eventId, input) => call<ProposalView>('POST', `/events/${encodeURIComponent(eventId)}/proposals`, input),
+    listProposals: () => call<ProposalView[]>('GET', '/me/proposals'),
+    acceptProposal: (id) => call<AppointmentView>('POST', `/proposals/${encodeURIComponent(id)}/accept`),
+    rejectProposal: (id) => call<{ id: string; status: string }>('POST', `/proposals/${encodeURIComponent(id)}/reject`),
+    cancelProposal: (id) => call<{ id: string; status: string }>('POST', `/proposals/${encodeURIComponent(id)}/cancel`),
+    listAppointments: () => call<AppointmentView[]>('GET', '/me/appointments'),
   };
 }
 

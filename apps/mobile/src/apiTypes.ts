@@ -1,5 +1,8 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
+  AppointmentView,
+  ProposalInput,
+  ProposalView,
   MaskBox,
   MyTicketStatus,
   TicketConfirmResult,
@@ -72,4 +75,10 @@ export interface Backend {
   uploadTicketImage(id: string, imageBase64: string, mimeType: string, masks: MaskBox[]): Promise<{ id: string; status: string }>;
   confirmTicket(id: string, reservationNumber: string, admissibleDayIds: string[]): Promise<TicketConfirmResult>;
   planAttendance(eventId: string): Promise<MyTicketStatus>;
+  sendProposal(eventId: string, input: ProposalInput): Promise<ProposalView>;
+  listProposals(): Promise<ProposalView[]>;
+  acceptProposal(id: string): Promise<AppointmentView>;
+  rejectProposal(id: string): Promise<{ id: string; status: string }>;
+  cancelProposal(id: string): Promise<{ id: string; status: string }>;
+  listAppointments(): Promise<AppointmentView[]>;
 }

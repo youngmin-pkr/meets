@@ -6,6 +6,8 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, Platform, View } from 'react-native';
 import {
   todayInSeoul,
+  type AppointmentView,
+  type ProposalView,
   type MaskBox,
   type MyTicketStatus,
   type TicketConfirmResult,
@@ -43,6 +45,12 @@ import {
   TicketUploadScreen,
 } from './src/screens/TicketScreens';
 import type { PickedImage } from './src/ticketFlow';
+import {
+  AppointmentScreen,
+  HomeScreen,
+  ProposalSentScreen,
+  ProposalsScreen,
+} from './src/screens/ProposalScreens';
 import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
 
 export default function App() {
@@ -66,6 +74,10 @@ export default function App() {
   const [ticketResult, setTicketResult] = useState<TicketConfirmResult | null>(null);
   const [ticketBusy, setTicketBusy] = useState(false);
   const [ticketError, setTicketError] = useState<string | null>(null);
+  // 제안과 약속
+  const [appointment, setAppointment] = useState<AppointmentView | null>(null);
+  const [justAccepted, setJustAccepted] = useState(false);
+  const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
   const [reported, setReported] = useState<{ input: EventReportInput; result: EventReportResult } | null>(null);
 
   function loadConfig() {
@@ -237,7 +249,40 @@ export default function App() {
         )}
         {screen === 'READY' && me && <ReadyScreen me={me} onDone={afterSave} />}
         {screen === 'HOME' && (
-          <EventListScreen onNext={startFlow} onReport={() => setScreen('EVENT_REPORT')} flowError={flowError} />
+          <HomeScreen
+            nickname={me?.nickname ?? ''}
+            onFindEvents={() => setScreen('EVENTS')}
+            onProposals={() => setScreen('PROPOSALS')}
+            onAppointment={(a) => {
+              setAppointment(a);
+              setJustAccepted(false);
+              setScreen('APPOINTMENT');
+            }}
+          />
+        )}
+        {screen === 'EVENTS' && (
+          <EventListScreen
+            onNext={startFlow}
+            onReport={() => setScreen('EVENT_REPORT')}
+            onBack={() => setScreen('HOME')}
+            flowError={flowError}
+          />
+        )}
+        {screen === 'PROPOSALS' && (
+          <ProposalsScreen
+            onBack={() => setScreen('HOME')}
+            onAccepted={(a) => {
+              setAppointment(a);
+              setJustAccepted(true);
+              setScreen('APPOINTMENT');
+            }}
+          />
+        )}
+        {screen === 'APPOINTMENT' && appointment && (
+          <AppointmentScreen appointment={appointment} justAccepted={justAccepted} onBack={() => setScreen('HOME')} />
+        )}
+        {screen === 'PROPOSAL_SENT' && sentProposal && (
+          <ProposalSentScreen proposal={sentProposal} onDone={() => setScreen('CANDIDATES')} onHome={() => setScreen('HOME')} />
         )}
         {screen === 'SCHEDULE' && event && draft && (
           <ScheduleScreen
@@ -245,7 +290,7 @@ export default function App() {
             days={selectableDays(event, todayIso())}
             draft={draft}
             onChange={setDraft}
-            onBack={() => setScreen('HOME')}
+            onBack={() => setScreen('EVENTS')}
             onNext={() => setScreen('TEMPO')}
           />
         )}
@@ -299,6 +344,10 @@ export default function App() {
             myGrade={myTicket?.grade ?? null}
             onVerify={() => setScreen('TICKET_INTRO')}
             onBack={() => setScreen('CANDIDATES')}
+            onSent={(p) => {
+              setSentProposal(p);
+              setScreen('PROPOSAL_SENT');
+            }}
           />
         )}
         {screen === 'TICKET_INTRO' && event && (
@@ -365,7 +414,7 @@ export default function App() {
         )}
         {screen === 'EVENT_REPORT' && (
           <EventReportScreen
-            onBack={() => setScreen('HOME')}
+            onBack={() => setScreen('EVENTS')}
             onDone={(input, result) => {
               setReported({ input, result });
               setScreen('EVENT_REPORTED');
@@ -373,7 +422,7 @@ export default function App() {
           />
         )}
         {screen === 'EVENT_REPORTED' && reported && (
-          <EventReportedScreen input={reported.input} result={reported.result} onDone={() => setScreen('HOME')} />
+          <EventReportedScreen input={reported.input} result={reported.result} onDone={() => setScreen('EVENTS')} />
         )}
       </View>
     </View>

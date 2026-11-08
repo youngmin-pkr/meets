@@ -307,3 +307,68 @@ describe('데모: 티켓 인증', () => {
     expect(r.candidates.some((c) => c.grade === 'VERIFIED')).toBe(true);
   });
 });
+
+describe('데모: 제안과 약속', () => {
+  async function setup(gender: 'M' | 'F' = 'F') {
+    let clock = new Date('2026-11-07T03:00:00Z');
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity(`fake:p1:2000-01-01:${gender}`, ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모제안', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const list = await backend.listEvents({});
+    const concert = await backend.getEvent(list.find((e) => e.name.includes('콘서트'))!.id);
+    await backend.savePreference(concert.id, {
+      days: [{ eventDayId: concert.days[0].id, arriveTime: concert.days[0].startTime, leaveTime: concert.days[0].endTime, togetherSegmentIds: concert.days[0].segments.map((s) => s.id) }],
+      tempoAnswers: [2, 2, 2],
+      immersionAnswers: [2, 2],
+      must: { gender: 'ANY', age: 'ANY', promises: [] },
+    });
+    const tick = (ms: number) => {
+      clock = new Date(clock.getTime() + ms);
+    };
+    return { backend, concert, tick };
+  }
+
+  test('인증 전에는 보낼 수 없고, 인증 후 보내면 예시 사용자가 잠시 뒤 수락해 약속이 생긴다', async () => {
+    const { backend, concert, tick } = await setup();
+    const { candidates } = await backend.getCandidates(concert.id, {});
+    const target = await backend.getCandidate(concert.id, candidates[0].userId);
+    const input = {
+      receiverId: target.userId,
+      eventDayId: target.overlaps[0].eventDayId,
+      segmentIds: target.overlaps[0].segmentIds.slice(0, 1),
+      meetingSpotId: concert.meetingSpots[0].id,
+    };
+    // 후보를 처음 볼 때 예시 사용자 한 명이 나에게 보낸 제안이 있으므로, 그 사람이 아닌 상대에게 보냄
+    const incoming = (await backend.listProposals()).find((p) => p.direction === 'RECEIVED');
+    const other = candidates.find((c) => c.userId !== incoming?.counterpart.userId)!;
+    const otherDetail = await backend.getCandidate(concert.id, other.userId);
+    const input2 = { ...input, receiverId: other.userId, eventDayId: otherDetail.overlaps[0].eventDayId, segmentIds: otherDetail.overlaps[0].segmentIds.slice(0, 1) };
+    await expect(backend.sendProposal(concert.id, input2)).rejects.toMatchObject({ code: 'PROPOSAL_NEEDS_TICKET' });
+
+    const t = await backend.startTicket(concert.id, 'TICKET');
+    await backend.uploadTicketImage(t.id, 'AAAA', 'image/jpeg', []);
+    await backend.confirmTicket(t.id, 'D1234', []);
+    const sent = await backend.sendProposal(concert.id, input2);
+    expect(sent).toMatchObject({ direction: 'SENT', status: 'SENT' });
+    await expect(backend.sendProposal(concert.id, input2)).rejects.toMatchObject({ code: 'PROPOSAL_EXISTS' });
+    tick(1500);
+    expect((await backend.listProposals()).find((p) => p.id === sent.id)?.status).toBe('ACCEPTED');
+    expect((await backend.listAppointments())[0]).toMatchObject({ status: 'PENDING_CONFIRM', counterpart: { userId: other.userId } });
+  });
+
+  test('예시 사용자가 보낸 제안을 수락·거절할 수 있고, 24시간 뒤에는 만료된다', async () => {
+    const { backend, concert, tick } = await setup();
+    await backend.getCandidates(concert.id, {});
+    const incoming = (await backend.listProposals()).find((p) => p.direction === 'RECEIVED')!;
+    expect(incoming.status).toBe('SENT');
+    // 인증 전에는 수락할 수 없음
+    await expect(backend.acceptProposal(incoming.id)).rejects.toMatchObject({ code: 'PROPOSAL_NEEDS_TICKET' });
+    tick(24 * 60 * 60 * 1000 + 1000);
+    expect((await backend.listProposals()).find((p) => p.id === incoming.id)?.status).toBe('EXPIRED');
+    await expect(backend.rejectProposal(incoming.id)).rejects.toMatchObject({ code: 'PROPOSAL_STATE' });
+  });
+});

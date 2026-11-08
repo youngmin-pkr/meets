@@ -45,6 +45,12 @@ export const POLICY_DEFAULTS = {
   TICKET_REVIEW_SAMPLE_PERCENT: 20,
   /** 인증 검수 처리 목표 시간(시간) (정리문서 정책 값 19) */
   TICKET_REVIEW_TARGET_HOURS: 24,
+  /** 일반 제안 만료(시간) (정리문서 정책 값 2) */
+  PROPOSAL_EXPIRE_HOURS: 24,
+  /** 행사 시작 몇 시간 전까지만 제안이 살아 있는지 (정리문서 정책 값 2) */
+  PROPOSAL_EVENT_CUTOFF_HOURS: 24,
+  /** '참석 예정'인 사람이 한 제안에 고를 수 있는 구간 수 (시안: 첫 제안은 짧은 구간만) */
+  PROPOSAL_PLANNED_MAX_SEGMENTS: 1,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

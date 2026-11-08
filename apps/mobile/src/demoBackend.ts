@@ -6,6 +6,11 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  proposalExpiresAt,
+  type AppointmentView,
+  type Counterpart,
+  type ProposalStatus,
+  type ProposalView,
   isValidMask,
   normalizeReservationNumber,
   type MyTicketStatus,
@@ -132,8 +137,35 @@ function toSummary(d: EventDetail): EventSummary {
   return { ...d, days: d.days.map(({ id, date, startTime, endTime }) => ({ id, date, startTime, endTime })) };
 }
 
-export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
+interface DemoProposal {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  eventId: string;
+  eventDayId: string;
+  segmentIds: string[];
+  meetingSpotId: string;
+  status: ProposalStatus;
+  expiresAt: Date;
+  createdAt: number;
+  /** 데모 전용: 예시 사용자가 자동으로 수락하는 시각 */
+  autoAcceptAt: number | null;
+}
+
+interface DemoAppointment {
+  id: string;
+  proposalId: string;
+  eventId: string;
+  eventDayId: string;
+  segmentIds: string[];
+  meetingSpotId: string;
+  users: [string, string];
+  createdAt: number;
+}
+
+export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs?: number } = {}): Backend {
   const now = options.now ?? (() => new Date());
+  const autoAcceptDelayMs = options.autoAcceptDelayMs ?? 3000;
   const users: DemoUser[] = [];
   const events = buildDemoEvents(todayInSeoul(now()));
   const takenKeys = new Set(DEMO_TAKEN_NICKNAMES.map(nicknameKey));
@@ -190,6 +222,125 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
   >();
   const plans = new Set<string>();
   let ticketSeq = 0;
+  const proposals: DemoProposal[] = [];
+  const appointments: DemoAppointment[] = [];
+  /** 데모 전용: 예시 사용자가 이미 제안을 보낸 (사용자|행사) */
+  const sampleProposed = new Set<string>();
+  let proposalSeq = 0;
+  const isSample = (id: string) => id.startsWith('demo-sample-');
+
+  function counterpartOf(userId: string): Counterpart {
+    const sample = people.get(userId);
+    const u = users.find((x) => x.id === userId);
+    return {
+      userId,
+      nickname: sample?.nickname ?? u?.nickname ?? '',
+      avatarInitial: sample?.avatarInitial ?? (u?.nickname ? avatarInitial(u.nickname) : ''),
+      avatarColor: sample?.avatarColor ?? AVATAR_COLORS[(u?.avatarColor as AvatarColor) ?? 'ink'] ?? AVATAR_COLORS.ink,
+    };
+  }
+
+  /** viewer가 보는 후보 중 other (조건을 넓힌 경우까지) */
+  function candidateFor(viewerId: string, eventId: string, otherId: string) {
+    const { days } = visibleEvent(eventId);
+    const all = profiles(eventId);
+    const viewer = all.find((p) => p.userId === viewerId);
+    if (!viewer) return null;
+    const today = isoOf(todayInSeoul(now()));
+    return (
+      matchCandidates(viewer, all, days.filter((d) => d.date >= today), POLICY, { shortTime: true, immersionPlus: true }).candidates.find(
+        (c) => c.userId === otherId,
+      ) ?? null
+    );
+  }
+
+  /** 만료와 (데모 전용) 예시 사용자의 자동 수락 */
+  function settle() {
+    const t = now().getTime();
+    for (const p of proposals) {
+      if (p.status !== 'SENT') continue;
+      if (p.expiresAt.getTime() <= t) p.status = 'EXPIRED';
+      else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) acceptInternal(p);
+    }
+  }
+
+  function acceptInternal(p: DemoProposal) {
+    p.status = 'ACCEPTED';
+    const a: DemoAppointment = {
+      id: `demo-appointment-${appointments.length + 1}`,
+      proposalId: p.id,
+      eventId: p.eventId,
+      eventDayId: p.eventDayId,
+      segmentIds: p.segmentIds,
+      meetingSpotId: p.meetingSpotId,
+      users: [p.senderId, p.receiverId],
+      createdAt: now().getTime(),
+    };
+    appointments.push(a);
+    return a;
+  }
+
+  function dayAndSpot(eventId: string, dayId: string, spotId: string) {
+    const ev = events.find((e) => e.detail.id === eventId)!.detail;
+    const day = ev.days.find((d) => d.id === dayId)!;
+    const spot = ev.meetingSpots.find((m) => m.id === spotId)!;
+    return { ev, day, spot };
+  }
+
+  function proposalView(p: DemoProposal, me: string): ProposalView {
+    const { ev, day, spot } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
+    const received = p.receiverId === me;
+    return {
+      id: p.id,
+      direction: received ? 'RECEIVED' : 'SENT',
+      status: p.status,
+      counterpart: counterpartOf(received ? p.senderId : p.receiverId),
+      event: { id: ev.id, name: ev.name },
+      day: { id: day.id, date: day.date },
+      segments: day.segments.filter((x) => p.segmentIds.includes(x.id)),
+      meetingSpot: { id: spot.id, name: spot.name },
+      expiresAt: p.expiresAt.toISOString(),
+      createdAt: new Date(p.createdAt).toISOString(),
+    };
+  }
+
+  function appointmentView(a: DemoAppointment, me: string): AppointmentView {
+    const { ev, day, spot } = dayAndSpot(a.eventId, a.eventDayId, a.meetingSpotId);
+    return {
+      id: a.id,
+      status: 'PENDING_CONFIRM',
+      counterpart: counterpartOf(a.users.find((u) => u !== me)!),
+      event: { id: ev.id, name: ev.name },
+      day: { id: day.id, date: day.date, startTime: day.startTime },
+      segments: day.segments.filter((x) => a.segmentIds.includes(x.id)),
+      meetingSpot: { id: spot.id, name: spot.name },
+      createdAt: new Date(a.createdAt).toISOString(),
+    };
+  }
+
+  function newProposal(senderId: string, receiverId: string, eventId: string, eventDayId: string, segmentIds: string[], meetingSpotId: string): DemoProposal {
+    const { day } = dayAndSpot(eventId, eventDayId, meetingSpotId);
+    const expiresAt = proposalExpiresAt(now(), day, {
+      expireHours: POLICY_DEFAULTS.PROPOSAL_EXPIRE_HOURS,
+      eventCutoffHours: POLICY_DEFAULTS.PROPOSAL_EVENT_CUTOFF_HOURS,
+    });
+    if (!expiresAt) throw new ApiError('PROPOSAL_TOO_LATE', `행사 ${POLICY_DEFAULTS.PROPOSAL_EVENT_CUTOFF_HOURS}시간 전부터는 제안할 수 없어요.`);
+    const p: DemoProposal = {
+      id: `demo-proposal-${++proposalSeq}`,
+      senderId,
+      receiverId,
+      eventId,
+      eventDayId,
+      segmentIds,
+      meetingSpotId,
+      status: 'SENT',
+      expiresAt,
+      createdAt: now().getTime(),
+      autoAcceptAt: isSample(receiverId) ? now().getTime() + autoAcceptDelayMs : null,
+    };
+    proposals.push(p);
+    return p;
+  }
 
   function latestTicket(userId: string, eventId: string) {
     return [...tickets.entries()]
@@ -500,6 +651,23 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       const { days, all, viewer } = matchContext(eventId);
       const result = matchCandidates(viewer, all, days, POLICY, options);
       const cards = result.candidates.map(cardOf);
+      // 데모 전용: 처음 후보를 볼 때 예시 사용자 한 명이 나에게 제안을 보냅니다. (받은 제안 흐름을 보여 주기 위해)
+      const key = `${viewer.userId}|${eventId}`;
+      if (!sampleProposed.has(key)) {
+        sampleProposed.add(key);
+        for (const c of result.candidates.filter((x) => isSample(x.userId))) {
+          const back = candidateFor(c.userId, eventId, viewer.userId);
+          const ov = back?.overlaps[0];
+          const spot = visibleEvent(eventId).event.meetingSpots[0];
+          if (!ov || !spot) continue;
+          try {
+            newProposal(c.userId, viewer.userId, eventId, ov.eventDayId, ov.segmentIds.slice(0, 1), spot.id);
+          } catch {
+            /* 행사가 너무 가까우면 건너뜀 */
+          }
+          break;
+        }
+      }
       return delay({
         total: cards.length,
         immersionRelaxed: result.immersionRelaxed,
@@ -615,6 +783,101 @@ export function createDemoBackend(options: { now?: () => Date } = {}): Backend {
       if (event.ticketRequired) throw new ApiError('PLAN_NOT_ALLOWED', '티켓이 필요한 행사는 티켓 인증을 해 주세요.');
       plans.add(`${user.id}|${eventId}`);
       return this.getTicketStatus(eventId);
+    },
+
+    async sendProposal(eventId, input) {
+      const user = currentUser();
+      settle();
+      if (input.receiverId === user.id) throw new ApiError('PROPOSAL_INVALID', '나에게는 제안할 수 없어요.');
+      const grade = gradeOf(user.id, eventId);
+      if (!grade) throw new ApiError('PROPOSAL_NEEDS_TICKET', '같은 행사 티켓 인증을 마친 뒤 제안할 수 있어요.');
+      if (grade === 'PLANNED' && input.segmentIds.length > POLICY_DEFAULTS.PROPOSAL_PLANNED_MAX_SEGMENTS) {
+        throw new ApiError('PROPOSAL_INVALID', `'참석 예정'일 때는 구간을 ${POLICY_DEFAULTS.PROPOSAL_PLANNED_MAX_SEGMENTS}개까지 제안할 수 있어요.`, {
+          field: 'segmentIds',
+        });
+      }
+      const mine = candidateFor(user.id, eventId, input.receiverId);
+      if (!mine) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const ov = mine.overlaps.find((o) => o.eventDayId === input.eventDayId);
+      if (!ov) throw new ApiError('PROPOSAL_INVALID', '함께할 수 있는 날을 골라 주세요.', { field: 'eventDayId' });
+      const { event } = visibleEvent(eventId);
+      const day = event.days.find((d) => d.id === input.eventDayId)!;
+      const segs = [...new Set(input.segmentIds)];
+      if (day.segments.length > 0 ? segs.length === 0 || !segs.every((x) => ov.segmentIds.includes(x)) : segs.length > 0) {
+        throw new ApiError('PROPOSAL_INVALID', '둘 다 같이하기로 한 구간 중에서 골라 주세요.', { field: 'segmentIds' });
+      }
+      if (!event.meetingSpots.some((m) => m.id === input.meetingSpotId)) {
+        throw new ApiError('PROPOSAL_INVALID', '공개된 만날 장소를 골라 주세요.', { field: 'meetingSpotId' });
+      }
+      const between = (p: { senderId: string; receiverId: string; eventId: string }) =>
+        p.eventId === eventId &&
+        ((p.senderId === user.id && p.receiverId === input.receiverId) || (p.senderId === input.receiverId && p.receiverId === user.id));
+      const pending = proposals.find((p) => between(p) && p.status === 'SENT');
+      if (pending) {
+        throw new ApiError('PROPOSAL_EXISTS', pending.senderId === user.id ? '이미 보낸 제안이 있어요.' : '상대가 보낸 제안이 와 있어요. 받은 제안에서 답해 주세요.');
+      }
+      if (appointments.some((a) => a.eventDayId === input.eventDayId && a.users.includes(user.id) && a.users.includes(input.receiverId))) {
+        throw new ApiError('PROPOSAL_EXISTS', '이 날 이미 약속이 있어요.');
+      }
+      const p = newProposal(user.id, input.receiverId, eventId, input.eventDayId, segs, input.meetingSpotId);
+      return delay(proposalView(p, user.id));
+    },
+
+    async listProposals() {
+      const user = currentUser();
+      settle();
+      return delay(
+        proposals
+          .filter((p) => p.senderId === user.id || p.receiverId === user.id)
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .map((p) => proposalView(p, user.id)),
+      );
+    },
+
+    async acceptProposal(id) {
+      const user = currentUser();
+      settle();
+      const p = proposals.find((x) => x.id === id && x.receiverId === user.id);
+      if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
+      if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', p.status === 'EXPIRED' ? '답할 수 있는 시간이 지났어요.' : '이미 처리된 제안이에요.');
+      if (!gradeOf(user.id, p.eventId)) throw new ApiError('PROPOSAL_NEEDS_TICKET', '같은 행사 티켓 인증을 마친 뒤 수락할 수 있어요.');
+      const still = candidateFor(p.senderId, p.eventId, user.id);
+      const ov = still?.overlaps.find((o) => o.eventDayId === p.eventDayId);
+      if (!ov || !p.segmentIds.every((x) => ov.segmentIds.includes(x))) {
+        throw new ApiError('PROPOSAL_INVALID', '그사이 일정이나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
+      }
+      return delay(appointmentView(acceptInternal(p), user.id));
+    },
+
+    async rejectProposal(id) {
+      const user = currentUser();
+      settle();
+      const p = proposals.find((x) => x.id === id && x.receiverId === user.id);
+      if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
+      if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
+      p.status = 'REJECTED';
+      return delay({ id, status: 'REJECTED' });
+    },
+
+    async cancelProposal(id) {
+      const user = currentUser();
+      settle();
+      const p = proposals.find((x) => x.id === id && x.senderId === user.id);
+      if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
+      if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
+      p.status = 'CANCELLED';
+      return delay({ id, status: 'CANCELLED' });
+    },
+
+    async listAppointments() {
+      const user = currentUser();
+      settle();
+      return delay(
+        appointments
+          .filter((a) => a.users.includes(user.id))
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .map((a) => appointmentView(a, user.id)),
+      );
     },
   };
 }
