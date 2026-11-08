@@ -1,5 +1,9 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
+  MaskBox,
+  MyTicketStatus,
+  TicketConfirmResult,
+  TicketKind,
   AgreedTerm,
   CandidateDetail,
   CandidatesResponse,
@@ -63,4 +67,9 @@ export interface Backend {
   getCandidates(eventId: string, options: MatchOptions): Promise<CandidatesResponse>;
   getCandidate(eventId: string, userId: string): Promise<CandidateDetail>;
   registerWait(eventId: string, includeImmersionPlus: boolean): Promise<{ endsOn: string; includeImmersionPlus: boolean }>;
+  getTicketStatus(eventId: string): Promise<MyTicketStatus>;
+  startTicket(eventId: string, kind: TicketKind): Promise<{ id: string; status: string }>;
+  uploadTicketImage(id: string, imageBase64: string, mimeType: string, masks: MaskBox[]): Promise<{ id: string; status: string }>;
+  confirmTicket(id: string, reservationNumber: string, admissibleDayIds: string[]): Promise<TicketConfirmResult>;
+  planAttendance(eventId: string): Promise<MyTicketStatus>;
 }

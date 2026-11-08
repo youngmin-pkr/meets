@@ -23,7 +23,13 @@ export type Screen =
   | 'MUST'
   | 'CANDIDATES'
   | 'CANDIDATE_DETAIL'
-  | 'WAIT';
+  | 'WAIT'
+  /** 티켓 인증 */
+  | 'TICKET_INTRO'
+  | 'TICKET_UPLOAD'
+  | 'TICKET_MASK'
+  | 'TICKET_CHECK'
+  | 'TICKET_RESULT';
 
 export function screenForStep(step: SignupStep): Screen {
   switch (step) {

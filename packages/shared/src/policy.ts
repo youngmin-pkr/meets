@@ -39,6 +39,12 @@ export const POLICY_DEFAULTS = {
   MATCH_SHORT_OVERLAP_MINUTES: 60,
   /** 후보 없음 알림 신청은 행사 며칠 전까지 (정리문서 정책 값 15) */
   WAIT_ALERT_END_DAYS_BEFORE: 3,
+  /** 티켓 캡처 이미지 최대 크기(MB) */
+  TICKET_IMAGE_MAX_MB: 5,
+  /** 티켓 인증 중 무작위로 사람이 검수하는 비율(%) */
+  TICKET_REVIEW_SAMPLE_PERCENT: 20,
+  /** 인증 검수 처리 목표 시간(시간) (정리문서 정책 값 19) */
+  TICKET_REVIEW_TARGET_HOURS: 24,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

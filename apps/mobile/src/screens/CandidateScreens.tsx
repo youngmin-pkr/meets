@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Switch, Text, View } from 'react-native';
 import {
+  ATTENDANCE_GRADE_LABELS,
+  type AttendanceGrade,
   describeEventDate,
   formatMinutes,
   type CandidateCard,
@@ -66,6 +68,15 @@ function badges(c: CandidateCard, multiDay: boolean) {
   return list;
 }
 
+function GradeBadge({ grade }: { grade: AttendanceGrade | null }) {
+  if (!grade) return <Text style={styles.small}>티켓 인증 전</Text>;
+  return grade === 'VERIFIED' ? (
+    <Badge label={`✓ ${ATTENDANCE_GRADE_LABELS.VERIFIED}`} tone="lime" />
+  ) : (
+    <Badge label={ATTENDANCE_GRADE_LABELS.PLANNED} tone="line" />
+  );
+}
+
 function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCard; multiDay: boolean; onPress: () => void; highlight: boolean }) {
   const best = [...c.overlaps].sort((a, b) => b.minutes - a.minutes)[0];
   return (
@@ -77,7 +88,10 @@ function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCa
     >
       <View style={[styles.row, { gap: 10 }]}>
         <Avatar initial={c.avatarInitial} color={c.avatarColor} />
-        <Text style={{ flex: 1, fontSize: 15, fontWeight: '700', color: colors.ink }}>{c.nickname}</Text>
+        <View style={{ flex: 1, gap: 4, alignItems: 'flex-start' }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>{c.nickname}</Text>
+          <GradeBadge grade={c.grade} />
+        </View>
         <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>자세히 ›</Text>
       </View>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
@@ -104,6 +118,9 @@ function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCa
 export function CandidatesScreen(props: {
   event: EventDetail;
   chosenDayIds: string[];
+  myGrade: AttendanceGrade | null;
+  ticketPending: boolean;
+  onVerify: () => void;
   onBack: () => void;
   onOpen: (c: CandidateCard) => void;
   onOtherDay: () => void;
@@ -151,6 +168,7 @@ export function CandidatesScreen(props: {
       <TopBar label="내 조건에 맞는 후보" onBack={props.onBack} />
       <Title>{data ? `함께할 후보 ${data.total}명` : '후보를 찾는 중이에요…'}</Title>
       <EventStrip event={event} dates={chosenDays.map((d) => d.date)} />
+      <VerifyBanner grade={props.myGrade} pending={props.ticketPending} onVerify={props.onVerify} />
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         <Pill label="추천순" selected={options.sort !== 'OVERLAP'} onPress={() => setOptions({ ...options, sort: 'RECOMMENDED' })} />
@@ -182,6 +200,26 @@ export function CandidatesScreen(props: {
       <ErrorText message={error} />
       <TextButton label="일정·스타일 다시 고르기" onPress={props.onBack} />
     </Page>
+  );
+}
+
+/** 내 인증 상태 안내 띠 */
+function VerifyBanner({ grade, pending, onVerify }: { grade: AttendanceGrade | null; pending: boolean; onVerify: () => void }) {
+  if (grade === 'VERIFIED') return null;
+  const text = pending
+    ? '티켓 인증을 확인하고 있어요. 끝나면 제안을 보낼 수 있어요.'
+    : grade === 'PLANNED'
+      ? "'참석 예정'으로 보이고 있어요. 예약 확인 화면으로 인증하면 먼저 보여요."
+      : '티켓 인증을 하면 제안을 보낼 수 있고, 후보 목록에서도 먼저 보여요.';
+  return (
+    <View style={{ gap: 6, padding: 12, borderRadius: 12, backgroundColor: colors.warnBg }}>
+      <Text style={[{ fontSize: 13, lineHeight: 19, color: colors.ink }, keepWords]}>{text}</Text>
+      {!pending ? (
+        <Pressable onPress={onVerify} accessibilityRole="button" style={{ minHeight: 36, justifyContent: 'center' }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>티켓 인증하기 ›</Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -247,7 +285,13 @@ function NoCandidatesView(props: {
   );
 }
 
-export function CandidateDetailScreen(props: { event: EventDetail; candidate: CandidateCard; onBack: () => void }) {
+export function CandidateDetailScreen(props: {
+  event: EventDetail;
+  candidate: CandidateCard;
+  myGrade: AttendanceGrade | null;
+  onVerify: () => void;
+  onBack: () => void;
+}) {
   const [detail, setDetail] = useState<CandidateDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -266,18 +310,30 @@ export function CandidateDetailScreen(props: { event: EventDetail; candidate: Ca
     <Page
       footer={
         <>
-          <PrimaryButton label="이 구간으로 제안 보내기" onPress={() => undefined} disabled />
-          <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
-            제안은 같은 행사 티켓 인증을 마친 뒤 보낼 수 있어요. (티켓 인증은 준비 중이에요)
-          </Text>
+          {props.myGrade === 'VERIFIED' ? (
+            <>
+              <PrimaryButton label="이 구간으로 제안 보내기" onPress={() => undefined} disabled />
+              <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
+                제안 보내기는 다음 단계에서 열려요.
+              </Text>
+            </>
+          ) : (
+            <>
+              <PrimaryButton label="티켓 인증하고 제안하기" onPress={props.onVerify} />
+              <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
+                제안은 같은 행사 티켓 인증을 마친 뒤 보낼 수 있어요.
+              </Text>
+            </>
+          )}
         </>
       }
     >
       <TopBar label="후보 상세" onBack={props.onBack} />
       <View style={[styles.row, { gap: 14 }]}>
         <Avatar initial={c.avatarInitial} color={c.avatarColor} size={56} />
-        <View style={{ gap: 4, flex: 1 }}>
+        <View style={{ gap: 4, flex: 1, alignItems: 'flex-start' }}>
           <Title>{c.nickname}</Title>
+          <GradeBadge grade={c.grade} />
           {c.sameFan ? <Badge label={detail?.publicFandoms.length ? `같은 팬 · ${detail.publicFandoms.join(', ')}` : '같은 팬'} tone="dark" /> : null}
         </View>
       </View>

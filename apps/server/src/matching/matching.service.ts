@@ -162,11 +162,18 @@ export class MatchingService {
       },
       include: {
         days: true,
-        user: { include: { identity: true, fandoms: { include: { fandom: true } } } },
+        user: {
+          include: {
+            identity: true,
+            fandoms: { include: { fandom: true } },
+            // 인증 완료만 '티켓 인증'으로 봅니다. (재검증 중에는 배지를 떼어 둠)
+            ticketVerifications: { where: { eventId, status: { in: ['VERIFIED'] } }, orderBy: { decidedAt: 'desc' }, take: 1 },
+            attendancePlans: { where: { eventId } },
+          },
+        },
       },
     });
     // TODO(7단계): 서로 차단한 사람은 후보에서 숨깁니다.
-    // TODO(6단계): 티켓으로 입장할 수 있는 날만 후보에 나오게 합니다.
     const users = new Map<string, { nickname: string; avatarInitial: string; avatarColor: string; fandomPublic: boolean; fandoms: string[] }>();
     const profiles = prefs.map((p) => {
       const birth = p.user.identity?.birthDate ? parseCalendarDate(p.user.identity.birthDate) : null;
@@ -185,6 +192,9 @@ export class MatchingService {
         immersion: p.immersionLevel,
         must: { gender: p.mustGender as MustGender, age: p.mustAge as MustAge, promises: p.promises as PromiseCode[] },
         fandomIds: p.user.fandoms.map((f) => f.fandomId),
+        grade: p.user.ticketVerifications.length ? 'VERIFIED' : p.user.attendancePlans.length ? 'PLANNED' : null,
+        // 티켓으로 입장할 수 있는 날만 후보로 봅니다. (정리문서 3장)
+        admissibleDayIds: p.user.ticketVerifications[0]?.admissibleDayIds ?? null,
         days: p.days.map((d) => ({
           eventDayId: d.eventDayId,
           arriveTime: d.arriveTime,
@@ -211,6 +221,7 @@ export class MatchingService {
     const u = users.get(c.userId)!;
     return {
       userId: c.userId,
+      grade: c.grade,
       nickname: u.nickname,
       avatarInitial: u.avatarInitial,
       avatarColor: AVATAR_COLORS[u.avatarColor as keyof typeof AVATAR_COLORS] ?? AVATAR_COLORS.ink,

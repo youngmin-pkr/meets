@@ -15,6 +15,8 @@ import { AdminLoginDto, EventInputDto, EventUpdateDto, ReasonDto } from '../even
 import type { EventStatus } from '../generated/prisma/client';
 import { EVENT_STATUS_STATES } from '../events/event-transitions';
 import { AdminAuthService, AdminGuard, CurrentAdmin, RequirePermission, type AdminPrincipal } from './admin-auth';
+import { AdminTicketsService } from '../tickets/admin-tickets.service';
+import { RejectTicketDto, ReverifyDto, ViewImageQuery } from '../tickets/tickets.dto';
 
 /**
  * 운영 콘솔용 서버 주소. 모든 주소는 서버에서 로그인과 권한표를 검사합니다.
@@ -25,7 +27,58 @@ export class AdminController {
   constructor(
     private readonly auth: AdminAuthService,
     private readonly events: AdminEventsService,
+    private readonly tickets: AdminTicketsService,
   ) {}
+
+  // ───── 인증 검수 ─────
+
+  @Get('ticket-reviews')
+  @UseGuards(AdminGuard)
+  @RequirePermission('REVIEW_TICKET', 'USE')
+  ticketQueue(@CurrentAdmin() admin: AdminPrincipal) {
+    return this.tickets.queue(admin.id);
+  }
+
+  /** 가린 이미지: 권한표상 검수자만 (관리자도 불가) */
+  @Get('ticket-reviews/:id/image')
+  @UseGuards(AdminGuard)
+  @RequirePermission('VIEW_TICKET_IMAGE', 'USE')
+  ticketImage(@CurrentAdmin() admin: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string, @Query() q: ViewImageQuery) {
+    return this.tickets.viewImage(admin.id, id, q.reason);
+  }
+
+  @Post('ticket-reviews/:id/approve')
+  @HttpCode(200)
+  @UseGuards(AdminGuard)
+  @RequirePermission('REVIEW_TICKET', 'USE')
+  approveTicket(@CurrentAdmin() admin: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.tickets.approve(admin.id, id);
+  }
+
+  @Post('ticket-reviews/:id/reject')
+  @HttpCode(200)
+  @UseGuards(AdminGuard)
+  @RequirePermission('REVIEW_TICKET', 'USE')
+  rejectTicket(@CurrentAdmin() admin: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string, @Body() body: RejectTicketDto) {
+    return this.tickets.reject(admin.id, id, body.reason);
+  }
+
+  @Post('ticket-reviews/:id/hold')
+  @HttpCode(200)
+  @UseGuards(AdminGuard)
+  @RequirePermission('REVIEW_TICKET', 'USE')
+  holdTicket(@CurrentAdmin() admin: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.tickets.hold(admin.id, id);
+  }
+
+  /** 신고로 재검증 요청 (신고 처리 권한) */
+  @Post('tickets/:id/reverify')
+  @HttpCode(200)
+  @UseGuards(AdminGuard)
+  @RequirePermission('HANDLE_REPORT', 'USE')
+  reverify(@CurrentAdmin() admin: AdminPrincipal, @Param('id', ParseUUIDPipe) id: string, @Body() body: ReverifyDto) {
+    return this.tickets.requestReverify(admin.id, id, body.reason);
+  }
 
   @Post('auth/login')
   @HttpCode(200)
