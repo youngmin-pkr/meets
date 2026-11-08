@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { AuditService } from '../admin/audit.service';
+import { AppointmentsService } from '../appointments/appointments.service';
 import { AppError } from '../common/app-error';
 import type { EventStatus, Prisma } from '../generated/prisma/client';
 import { isUniqueViolation, PrismaService } from '../prisma/prisma.service';
@@ -20,10 +21,6 @@ const fullInclude = {
 /** 두 명 확인 작업(AdminApproval)의 상태. 행사·티켓 상태와 이름이 겹쳐서 상수로 씁니다. */
 const APPROVAL = { PENDING: 'PENDING', CONFIRMED: 'CONFIRMED' } as const;
 
-/** 행사가 바뀌면 영향을 받는 약속 수. 약속은 4단계에서 생깁니다. */
-// TODO(4단계): 이 행사의 진행 중 약속 수를 세고, 저장 후 '다시 정하기'로 바꾸고 안내합니다.
-const affectedAppointmentCount = async (_eventId: string) => 0;
-
 /**
  * 운영 콘솔의 행사 기능 (행사 등록·수정, 제보 검수, 행사 취소)
  * 운영 콘솔 화면은 아직 없고, 서버 기능과 규칙만 먼저 만들었습니다.
@@ -34,6 +31,7 @@ export class AdminEventsService {
     private readonly prisma: PrismaService,
     private readonly eventState: EventStateService,
     private readonly audit: AuditService,
+    private readonly appointments: AppointmentsService,
   ) {}
 
   async list(adminId: string, status?: EventStatus) {
@@ -77,6 +75,69 @@ export class AdminEventsService {
       },
       meetingSpots: { create: input.meetingSpots.map((s) => ({ name: s.name, isPublicPlace: s.isPublicPlace })) },
     };
+  }
+
+  /** 날짜는 날짜로, 구간은 이름으로 맞춰서 고칩니다. 없어진 날·구간만 지웁니다. */
+  private async syncDays(
+    tx: Prisma.TransactionClient,
+    eventId: string,
+    current: Array<{ id: string; date: string; segments: Array<{ id: string; label: string }> }>,
+    days: EventInputDto['days'],
+  ) {
+    for (const d of days) {
+      const existing = current.find((c) => c.date === d.date);
+      if (!existing) {
+        await tx.eventDay.create({
+          data: {
+            eventId,
+            date: d.date,
+            startTime: d.startTime,
+            endTime: d.endTime,
+            segments: { create: d.segments.map((x, i) => ({ label: x.label, startTime: x.startTime, endTime: x.endTime, sortOrder: i })) },
+          },
+        });
+        continue;
+      }
+      await tx.eventDay.update({ where: { id: existing.id }, data: { startTime: d.startTime, endTime: d.endTime } });
+      const kept = new Set<string>();
+      for (const [i, x] of d.segments.entries()) {
+        const same = existing.segments.find((c) => c.label === x.label && !kept.has(c.id));
+        if (same) {
+          kept.add(same.id);
+          await tx.eventSegment.update({ where: { id: same.id }, data: { startTime: x.startTime, endTime: x.endTime, sortOrder: i } });
+        } else {
+          const created = await tx.eventSegment.create({
+            data: { eventDayId: existing.id, label: x.label, startTime: x.startTime, endTime: x.endTime, sortOrder: i },
+          });
+          kept.add(created.id);
+        }
+      }
+      await tx.eventSegment.deleteMany({ where: { eventDayId: existing.id, id: { notIn: [...kept] } } });
+    }
+    const dates = days.map((d) => d.date);
+    await tx.eventDay.deleteMany({ where: { eventId, date: { notIn: dates } } });
+  }
+
+  /** 만날 장소는 이름으로 맞춰서 고칩니다. 없어진 장소만 지웁니다. (제안·약속에는 장소 이름이 남아 있음) */
+  private async syncMeetingSpots(
+    tx: Prisma.TransactionClient,
+    eventId: string,
+    current: Array<{ id: string; name: string }>,
+    spots: EventInputDto['meetingSpots'],
+  ) {
+    const kept = new Set<string>();
+    for (const sp of spots) {
+      const name = sp.name.trim();
+      const same = current.find((c) => c.name === name && !kept.has(c.id));
+      if (same) {
+        kept.add(same.id);
+        await tx.meetingSpot.update({ where: { id: same.id }, data: { isPublicPlace: sp.isPublicPlace } });
+      } else {
+        const created = await tx.meetingSpot.create({ data: { eventId, name, isPublicPlace: sp.isPublicPlace } });
+        kept.add(created.id);
+      }
+    }
+    await tx.meetingSpot.deleteMany({ where: { eventId, id: { notIn: [...kept] } } });
   }
 
   /** 운영자가 행사를 직접 등록합니다. */
@@ -128,7 +189,7 @@ export class AdminEventsService {
     if (needsChangedState && !confirmed) {
       // 수정 저장 전 확인 (정리문서 5장). 화면은 이 값을 보여 주고 확인을 받습니다.
       throw new AppError('CONFIRM_REQUIRED', '일정이 바뀌어요. 약속한 사람들에게 안내가 나가요. 저장할까요?', {
-        affectedAppointments: await affectedAppointmentCount(id),
+        affectedAppointments: await this.appointments.countAffectedBySchedule(id, input.days),
       });
     }
 
@@ -138,11 +199,10 @@ export class AdminEventsService {
           // 표에 따라 '등록 → 변경됨' 또는 '변경됨 → 변경됨'
           await this.eventState.transition(tx, id, current.status, 'CHANGED');
         }
-        // 일정이 그대로면 날짜·구간은 건드리지 않습니다. (사용자가 고른 날·구간이 지워지지 않도록)
-        const replaceDays = scheduleChanged || current.days.length === 0;
-        const nested = this.nestedWrites(input);
-        if (replaceDays) await tx.eventDay.deleteMany({ where: { eventId: id } });
-        await tx.meetingSpot.deleteMany({ where: { eventId: id } });
+        // 날짜·구간·만날 장소는 지우고 새로 만들지 않고, 같은 날짜·같은 이름이면 그대로 고쳐 씁니다.
+        // (사용자가 고른 날·구간, 티켓으로 입장할 수 있는 날, 제안·약속이 계속 같은 날을 가리키도록)
+        if (scheduleChanged || current.days.length === 0) await this.syncDays(tx, id, current.days, input.days);
+        await this.syncMeetingSpots(tx, id, current.meetingSpots, input.meetingSpots);
         await tx.event.update({
           where: { id },
           data: {
@@ -153,10 +213,12 @@ export class AdminEventsService {
             officialUrl: input.officialUrl.trim(),
             officialUrlKey: urlKey,
             ticketRequired: input.ticketRequired,
-            meetingSpots: nested.meetingSpots,
-            ...(replaceDays ? { days: nested.days } : {}),
           },
         });
+        if (needsChangedState) {
+          // 시간이 달라진 약속은 '다시 정하기'로 바꾸고 약속한 사람들에게 안내합니다. (정리문서 5장)
+          await this.appointments.onEventScheduleChanged(tx, id);
+        }
         await this.audit.record(
           {
             actorId: adminId,
@@ -253,12 +315,13 @@ export class AdminEventsService {
         data: { status: APPROVAL.CONFIRMED, confirmedById: adminId, decidedAt: new Date() },
       });
       if (done.count !== 1) throw new AppError('APPROVAL_INVALID', '이미 처리된 제안이에요.');
+      // 이 행사의 약속은 모두 자동 종료하고, 후기 요청 없이 취소 안내를 보냅니다. (정리문서 5장)
+      await this.appointments.onEventCancelled(tx, event.id);
       await this.audit.record(
         { actorId: adminId, action: 'EVENT_CANCEL_CONFIRM', targetType: 'Event', targetId: event.id, reason: approval.reason },
         tx,
       );
     });
-    // TODO(4단계): 이 행사의 약속을 모두 자동 종료하고, 후기 요청 없이 취소 안내를 보냅니다.
     return this.get(adminId, event.id);
   }
 }

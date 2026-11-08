@@ -20,6 +20,9 @@ export type Screen =
   | 'PROPOSALS'
   | 'PROPOSAL_SENT'
   | 'APPOINTMENT'
+  | 'APPOINTMENT_CANCEL'
+  /** 알림함 */
+  | 'NOTIFICATIONS'
   | 'EVENT_REPORT'
   | 'EVENT_REPORTED'
   /** 입력 흐름 2~5단계 */

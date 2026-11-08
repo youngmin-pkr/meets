@@ -1,6 +1,8 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
   AppointmentView,
+  CancelReason,
+  NotificationView,
   ProposalInput,
   ProposalView,
   MaskBox,
@@ -81,4 +83,19 @@ export interface Backend {
   rejectProposal(id: string): Promise<{ id: string; status: string }>;
   cancelProposal(id: string): Promise<{ id: string; status: string }>;
   listAppointments(): Promise<AppointmentView[]>;
+  getAppointment(id: string): Promise<AppointmentView>;
+  /** '갈 수 있어요' (전날 확인), 행사 일정이 바뀐 뒤에는 '바뀐 일정으로 갈게요' */
+  confirmAppointment(id: string): Promise<AppointmentView>;
+  cancelAppointment(id: string, reason?: CancelReason): Promise<AppointmentView>;
+  arriveAppointment(id: string): Promise<AppointmentView>;
+  reportNoShow(id: string): Promise<AppointmentView>;
+  listNotifications(): Promise<{ items: NotificationView[]; unread: number }>;
+  markNotificationsRead(): Promise<{ unread: number }>;
+  getHomeSummary(): Promise<HomeSummary>;
+}
+
+/** 홈 화면 요약 */
+export interface HomeSummary {
+  unreadNotifications: number;
+  hasVerifiedTicket: boolean;
 }

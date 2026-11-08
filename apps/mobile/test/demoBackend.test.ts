@@ -196,7 +196,7 @@ describe('데모: 입력 흐름과 후보', () => {
     await backend.updateProfile('데모보기', 'ink');
     await backend.setFandoms([], false);
     await backend.setNotificationChoice(false);
-    const [concert] = await backend.listEvents({});
+    const concert = (await backend.listEvents({})).find((e) => e.name.includes('콘서트'))!;
     return { backend, event: await backend.getEvent(concert.id) };
   }
   const input = (event: Awaited<ReturnType<typeof ready>>['event'], must = { gender: 'ANY' as const, age: 'ANY' as const, promises: [] as never[] }) => ({
@@ -372,3 +372,119 @@ describe('데모: 제안과 약속', () => {
     await expect(backend.rejectProposal(incoming.id)).rejects.toMatchObject({ code: 'PROPOSAL_STATE' });
   });
 });
+
+describe('데모: 약속 (전날 확인·취소·알림)', () => {
+  /** 가입을 마치면 '내일 약속'이 하나 들어 있습니다 (예시 상대는 이미 확인함) */
+  async function member() {
+    let clock = new Date('2026-11-07T03:00:00Z'); // 한국 시간 11월 7일 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity('fake:ap1:2000-01-01:F', ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모약속', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const tick = (ms: number) => {
+      clock = new Date(clock.getTime() + ms);
+    };
+    return { backend, tick };
+  }
+
+  test("가입하면 내일 약속이 있고, 바로 '갈 수 있어요'를 누르면 확정된다", async () => {
+    const { backend } = await member();
+    const [a] = await backend.listAppointments();
+    expect(a).toMatchObject({
+      status: 'PENDING_CONFIRM',
+      day: { date: '2026-11-08' },
+      counterpart: { nickname: '하늘' },
+      confirm: { mine: false, theirs: true },
+      actions: { confirm: true, cancel: true },
+      needsAction: true,
+    });
+    const notes = await backend.listNotifications();
+    expect(notes.items.map((n) => n.kind)).toContain('DAY_BEFORE_CONFIRM');
+    expect(notes.unread).toBeGreaterThan(0);
+
+    const done = await backend.confirmAppointment(a.id);
+    expect(done).toMatchObject({ status: 'CONFIRMED', confirm: { mine: true, theirs: true }, needsAction: false });
+    await expect(backend.confirmAppointment(a.id)).rejects.toMatchObject({ code: 'APPOINTMENT_STATE' });
+    // 확정 알림은 기다리던 상대에게 갑니다. (내가 마지막으로 눌렀으므로 나에게는 오지 않음)
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).not.toContain('APPOINTMENT_CONFIRMED');
+  });
+
+  test('약속 24시간 전까지는 영향 없고, 그 뒤 취소는 임박 취소로 기록된다', async () => {
+    const { backend, tick } = await member();
+    const [a] = await backend.listAppointments();
+    expect(a.freeCancelUntil).toBe(new Date('2026-11-07T05:00:00Z').toISOString()); // 11월 7일 14시
+    tick(3 * 60 * 60 * 1000); // 15시
+    const cancelled = await backend.cancelAppointment(a.id, 'SICK');
+    expect(cancelled).toMatchObject({ status: 'CANCELLED', end: { reason: 'CANCELLED', byMe: true, late: true, cancelReason: '몸이 안 좋아요' } });
+    await expect(backend.cancelAppointment(a.id)).rejects.toMatchObject({ code: 'APPOINTMENT_STATE' });
+  });
+
+  test('마감까지 확인하지 않으면 취소되고 무응답으로 보인다', async () => {
+    const { backend, tick } = await member();
+    const [a] = await backend.listAppointments();
+    tick(23 * 60 * 60 * 1000); // 다음 날 11시 (마감: 약속 3시간 전)
+    const after = await backend.getAppointment(a.id);
+    expect(after).toMatchObject({ status: 'CANCELLED', end: { reason: 'NO_CONFIRM', byMe: true } });
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).toContain('NO_CONFIRM_SELF');
+  });
+
+  test('확정 뒤 약속 1시간 전부터 도착을 남기고, 상대 기록이 없으면 15분 뒤 안 나왔어요를 누를 수 있다', async () => {
+    const { backend, tick } = await member();
+    const [a] = await backend.listAppointments();
+    await backend.confirmAppointment(a.id);
+    await expect(backend.arriveAppointment(a.id)).rejects.toMatchObject({ code: 'APPOINTMENT_NOT_NOW' });
+    tick(25 * 60 * 60 * 1000); // 다음 날 13시 (약속 14시)
+    expect((await backend.listNotifications()).items[0].kind).toBe('APPOINTMENT_SOON');
+    expect((await backend.arriveAppointment(a.id)).arrival.mine).not.toBeNull();
+    tick(75 * 60 * 1000); // 14:15
+    const meeting = await backend.getAppointment(a.id);
+    expect(meeting).toMatchObject({ status: 'IN_PROGRESS', actions: { reportNoShow: true } });
+    expect(await backend.reportNoShow(a.id)).toMatchObject({ status: 'ENDED_EARLY', end: { reason: 'NO_SHOW', byMe: true } });
+  });
+
+  test('시간이 겹치는 제안은 보낼 수 없다', async () => {
+    const { backend, tick } = await member();
+    const concert = await backend.getEvent((await backend.listEvents({})).find((e) => e.name.includes('콘서트'))!.id);
+    const day = concert.days[0];
+    await backend.savePreference(concert.id, {
+      days: [{ eventDayId: day.id, arriveTime: day.startTime, leaveTime: day.endTime, togetherSegmentIds: day.segments.map((s) => s.id) }],
+      tempoAnswers: [2, 2, 2],
+      immersionAnswers: [2, 2],
+      must: { gender: 'ANY', age: 'ANY', promises: [] },
+    });
+    const t = await backend.startTicket(concert.id, 'TICKET');
+    await backend.uploadTicketImage(t.id, 'AAAA', 'image/jpeg', []);
+    await backend.confirmTicket(t.id, 'O1234', []);
+    const { candidates } = await backend.getCandidates(concert.id, { shortTime: true, immersionPlus: true });
+    const incoming = (await backend.listProposals()).find((p) => p.direction === 'RECEIVED' && p.status === 'SENT');
+    const others = candidates.filter((c) => c.userId !== incoming?.counterpart.userId);
+    const proposalTo = async (userId: string) => {
+      const d = await backend.getCandidate(concert.id, userId);
+      const segs = d.overlaps[0].segmentIds.filter((id) => id === day.segments[0].id);
+      return { receiverId: userId, eventDayId: d.overlaps[0].eventDayId, segmentIds: segs, meetingSpotId: concert.meetingSpots[0].id };
+    };
+    const withGoods = [];
+    for (const c of others) if ((await proposalTo(c.userId)).segmentIds.length) withGoods.push(c.userId);
+    expect(withGoods.length).toBeGreaterThanOrEqual(2);
+    await backend.sendProposal(concert.id, await proposalTo(withGoods[0]));
+    tick(1500); // 예시 사용자가 수락 → 약속
+    await backend.listAppointments();
+    await expect(backend.sendProposal(concert.id, await proposalTo(withGoods[1]))).rejects.toMatchObject({ code: 'APPOINTMENT_OVERLAP' });
+  });
+
+  test('알림을 열어 보면 모두 읽음이 된다', async () => {
+    const { backend } = await member();
+    expect((await backend.getHomeSummary()).unreadNotifications).toBeGreaterThan(0);
+    await backend.markNotificationsRead();
+    expect(await backend.getHomeSummary()).toEqual({ unreadNotifications: 0, hasVerifiedTicket: false });
+  });
+
+  test('다른 사람의 약속은 볼 수 없다', async () => {
+    const { backend } = await member();
+    await expect(backend.getAppointment('demo-appointment-999')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+

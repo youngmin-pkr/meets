@@ -1,11 +1,10 @@
 /**
- * 홈 · 내 제안(받은/보낸) · 약속(확정 대기) · 제안 보내기
- * (시안: Home, Detail의 '처음엔 짧게 시작해요', ConfirmWait)
+ * 내 제안(받은/보낸) · 제안 보내기 (시안: Detail의 '처음엔 짧게 시작해요')
+ * 홈과 약속 화면은 AppointmentScreens.tsx에 있습니다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import {
-  APPOINTMENT_STATUS_LABELS,
   describeEventDate,
   describeRemaining,
   POLICY_DEFAULTS,
@@ -19,14 +18,14 @@ import {
 } from '@meets/shared';
 import { api } from '../api';
 import { colors } from '../theme';
-import { Body, Card, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
+import { Body, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
 
-const dateText = (iso: string) => {
+export const dateText = (iso: string) => {
   const { month, day, weekday } = describeEventDate(iso);
   return `${month}.${day} (${weekday})`;
 };
 
-function Avatar({ c, size = 40 }: { c: Counterpart; size?: number }) {
+export function Avatar({ c, size = 40 }: { c: Counterpart; size?: number }) {
   return (
     <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: c.avatarColor, alignItems: 'center', justifyContent: 'center' }}>
       <Text style={{ fontSize: size * 0.4, fontWeight: '900', color: colors.lime }}>{c.avatarInitial}</Text>
@@ -34,79 +33,12 @@ function Avatar({ c, size = 40 }: { c: Counterpart; size?: number }) {
   );
 }
 
-const Row = ({ label, text }: { label: string; text: string }) => (
+export const Row = ({ label, text }: { label: string; text: string }) => (
   <View style={{ flexDirection: 'row', gap: 12 }}>
     <Text style={{ width: 56, fontSize: 12, fontWeight: '700', color: colors.muted }}>{label}</Text>
     <Text style={[{ flex: 1, fontSize: 14, color: colors.ink }, keepWords]}>{text}</Text>
   </View>
 );
-
-/** 가입을 마친 사람의 첫 화면 */
-export function HomeScreen(props: {
-  nickname: string;
-  onFindEvents: () => void;
-  onProposals: () => void;
-  onAppointment: (a: AppointmentView) => void;
-}) {
-  const [proposals, setProposals] = useState<ProposalView[] | null>(null);
-  const [appointments, setAppointments] = useState<AppointmentView[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    Promise.all([api.listProposals(), api.listAppointments()]).then(
-      ([p, a]) => {
-        setProposals(p);
-        setAppointments(a);
-      },
-      (e: Error) => setError(e.message),
-    );
-  }, []);
-
-  const received = proposals?.filter((p) => p.direction === 'RECEIVED' && p.status === 'SENT') ?? [];
-  const sent = proposals?.filter((p) => p.direction === 'SENT' && p.status === 'SENT') ?? [];
-  const upcoming = appointments.filter((a) => a.status === 'PENDING_CONFIRM' || a.status === 'CONFIRMED');
-  const soonest = received.map((p) => p.expiresAt).sort()[0];
-
-  return (
-    <Page footer={<PrimaryButton label="같이 갈 행사 찾기" onPress={props.onFindEvents} />}>
-      <Text style={{ fontSize: 13, color: colors.muted, paddingTop: 8 }}>오늘도 즐거운 행사 되세요</Text>
-      <Title>{`안녕하세요, ${props.nickname}님`}</Title>
-
-      {upcoming.map((a) => (
-        <Pressable
-          key={a.id}
-          onPress={() => props.onAppointment(a)}
-          accessibilityRole="button"
-          style={{ gap: 8, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}
-        >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.muted }}>다가오는 약속</Text>
-            <Text style={{ fontSize: 12, fontWeight: '900', color: colors.primary }}>{APPOINTMENT_STATUS_LABELS[a.status]}</Text>
-          </View>
-          <Text style={[{ fontSize: 16, fontWeight: '900', color: colors.ink }, keepWords]}>{a.event.name}</Text>
-          <Text style={[{ fontSize: 13, color: colors.body }, keepWords]}>
-            {`${dateText(a.day.date)} ${a.segments[0]?.startTime ?? a.day.startTime} · ${a.segments.map((s) => s.label).join(', ') || '행사 시간'} · ${a.counterpart.nickname}님`}
-          </Text>
-        </Pressable>
-      ))}
-
-      <Pressable
-        onPress={props.onProposals}
-        accessibilityRole="button"
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 14, backgroundColor: received.length ? colors.lime : colors.white, borderWidth: received.length ? 0 : 1.5, borderColor: colors.border }}
-      >
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text style={{ fontSize: 14, fontWeight: '900', color: colors.ink }}>{`받은 제안 ${received.length}건 · 보낸 제안 ${sent.length}건`}</Text>
-          <Text style={[{ fontSize: 12, color: colors.body }, keepWords]}>
-            {soonest ? `답하지 않으면 ${describeRemaining(soonest, new Date()).replace(' 남음', '')} 뒤 만료돼요` : '제안을 주고받으면 여기에 보여요'}
-          </Text>
-        </View>
-        <Text style={{ fontSize: 16, color: colors.ink }}>›</Text>
-      </Pressable>
-      <ErrorText message={error} />
-    </Page>
-  );
-}
 
 /** 받은 제안 · 보낸 제안 */
 export function ProposalsScreen(props: { onBack: () => void; onAccepted: (a: AppointmentView) => void }) {
@@ -183,39 +115,6 @@ export function ProposalsScreen(props: { onBack: () => void; onAccepted: (a: App
       ))}
       <Text style={[styles.small, keepWords]}>{`답하지 않은 제안은 ${POLICY_DEFAULTS.PROPOSAL_EXPIRE_HOURS}시간 뒤(행사가 가까우면 더 일찍) 만료돼요. 연락처는 수락 뒤에도 공개되지 않아요.`}</Text>
       <ErrorText message={error} />
-    </Page>
-  );
-}
-
-/** 수락 뒤 약속 (확정 대기) */
-export function AppointmentScreen(props: { appointment: AppointmentView; justAccepted?: boolean; onBack: () => void }) {
-  const a = props.appointment;
-  return (
-    <Page footer={<PrimaryButton label="확인했어요" onPress={props.onBack} />}>
-      <TopBar label="내 약속" onBack={props.onBack} />
-      <View style={[styles.row, { padding: 14, borderRadius: 14, backgroundColor: colors.lime }]}>
-        <Avatar c={a.counterpart} />
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text style={{ fontSize: 16, fontWeight: '900', color: colors.ink }}>
-            {props.justAccepted ? '약속이 만들어졌어요' : `${a.counterpart.nickname}님과의 약속`}
-          </Text>
-          <Text style={[{ fontSize: 12, color: colors.ink }, keepWords]}>아직 확정은 아니에요. 전날 한 번 더 확인해요.</Text>
-        </View>
-      </View>
-      <View style={{ gap: 10, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
-        <Row label="행사" text={a.event.name} />
-        <Row label="날짜" text={`${dateText(a.day.date)} ${a.segments[0]?.startTime ?? a.day.startTime}`} />
-        <Row label="구간" text={a.segments.map((s) => `${s.label} ${s.startTime}–${s.endTime}`).join(', ') || '행사 시간 중'} />
-        <Row label="장소" text={a.meetingSpot.name} />
-        <Row label="상대" text={`${a.counterpart.nickname}님`} />
-        <Row label="상태" text={APPOINTMENT_STATUS_LABELS[a.status]} />
-      </View>
-      <Card>
-        <Text style={{ fontSize: 13, fontWeight: '700' }}>앞으로 이렇게 진행돼요</Text>
-        <Body>{'① 수락됨 — 지금 여기예요\n② 전날 확정 — 둘 다 ‘갈 수 있어요’를 누르면 확정돼요\n③ 당일 만남'}</Body>
-        <Text style={[styles.small, keepWords]}>전날 확인과 알림, 채팅은 다음 단계에서 열려요.</Text>
-      </Card>
-      <Body>연락처는 공개되지 않아요. 약속에 대한 대화는 앱 안 채팅으로 하게 돼요.</Body>
     </Page>
   );
 }

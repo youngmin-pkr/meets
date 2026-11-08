@@ -3,7 +3,8 @@
  * - 계정(ageClass·status): src/account-state/
  * - 행사(status): src/events/event-state.service.ts
  * - 티켓 인증(status): src/tickets/ticket-state.service.ts
- * - 제안·약속(status): src/proposals/proposal-state.service.ts
+ * - 제안(status): src/proposals/proposal-state.service.ts
+ * - 약속(status): src/appointments/appointment-state.service.ts
  * 다른 파일에서 상태 값을 직접 저장하려 하면 이 테스트가 실패합니다.
  * 조회 조건은 { equals: 'ACTIVE' }, { in: [...] }처럼 써서 저장과 구별합니다.
  * 결과를 돌려주는 응답(예: return { status: 'VERIFIED' as const })은 저장이 아니라서 검사하지 않습니다.
@@ -17,6 +18,7 @@ const ALLOWED = [
   path.join(SRC, 'events', 'event-state.service.ts'),
   path.join(SRC, 'tickets', 'ticket-state.service.ts'),
   path.join(SRC, 'proposals', 'proposal-state.service.ts'),
+  path.join(SRC, 'appointments', 'appointment-state.service.ts'),
 ];
 
 /** 계정·행사 상태 값을 직접 넣는 코드 (예: status: 'CANCELLED', ageClass: 'ADULT') */

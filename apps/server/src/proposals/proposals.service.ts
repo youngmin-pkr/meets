@@ -1,18 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  appointmentWindow,
   AVATAR_COLORS,
+  formatSeoulShort,
   proposalExpiresAt,
-  type AppointmentStatus,
+  rangeOf,
   type AppointmentView,
   type Counterpart,
   type ProposalInput,
   type ProposalStatus,
   type ProposalView,
 } from '@meets/shared';
+import { AppointmentsService } from '../appointments/appointments.service';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
 import { MatchingService } from '../matching/matching.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TicketsService } from '../tickets/tickets.service';
@@ -49,6 +53,8 @@ export class ProposalsService {
     private readonly state: ProposalStateService,
     private readonly matching: MatchingService,
     private readonly tickets: TicketsService,
+    private readonly appointments: AppointmentsService,
+    private readonly notifications: NotificationsService,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -61,7 +67,6 @@ export class ProposalsService {
     for (const p of due) {
       await this.prisma.$transaction((tx) => this.state.transition(tx, p.id, 'SENT', 'EXPIRED')).catch(() => undefined);
     }
-    // TODO(4단계): 보낸 사람에게 만료 안내를 보냅니다.
     return due.length;
   }
 
@@ -79,11 +84,14 @@ export class ProposalsService {
       status: p.status as ProposalStatus,
       counterpart: counterpart(received ? p.sender : p.receiver),
       event: { id: p.event.id, name: p.event.name },
-      day: { id: p.eventDay.id, date: p.eventDay.date },
-      segments: p.eventDay.segments
-        .filter((s) => p.segmentIds.includes(s.id))
-        .map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime })),
-      meetingSpot: { id: p.meetingSpot.id, name: p.meetingSpot.name },
+      // 행사 일정이 바뀌어 날·장소가 없어져도, 제안할 때 저장해 둔 값으로 보여 줍니다.
+      day: { id: p.eventDayId, date: p.eventDay?.date ?? p.date },
+      segments: p.eventDay
+        ? p.eventDay.segments
+            .filter((s) => p.segmentIds.includes(s.id))
+            .map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime }))
+        : (p.segmentsSnapshot as unknown as ProposalView['segments']),
+      meetingSpot: { id: p.meetingSpotId, name: p.meetingSpot?.name ?? p.meetingSpotName },
       expiresAt: p.expiresAt.toISOString(),
       createdAt: p.createdAt.toISOString(),
     };
@@ -154,18 +162,38 @@ export class ProposalsService {
     });
     if (accepted) throw new AppError('PROPOSAL_EXISTS', '이 날 이미 약속이 있어요.');
 
-    const created = await this.prisma.$transaction((tx) =>
-      this.state.createSent(tx, {
+    // 7) 내 다른 약속과 시간이 겹치면 보내지 않음 (2026-11-08 사용자 확인)
+    const segments = day.segments.filter((s) => segIds.includes(s.id)).sort((a, b) => a.sortOrder - b.sortOrder);
+    const window = appointmentWindow(day, segments);
+    if (await this.appointments.findOverlap(senderId, rangeOf(day.date, window.startTime, window.endTime))) {
+      throw new AppError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const proposal = await this.state.createSent(tx, {
         senderId,
         receiverId: input.receiverId,
         eventId,
         eventDayId: input.eventDayId,
         segmentIds: segIds,
         meetingSpotId: spot.id,
+        date: day.date,
+        segmentsSnapshot: segments.map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime })),
+        meetingSpotName: spot.name,
         expiresAt,
-      }),
-    );
-    // TODO(4단계): 받는 사람에게 '제안 도착' 알림 (만료까지 응답 기한 표시)
+      });
+      const sender = await tx.user.findUniqueOrThrow({ where: { id: senderId }, select: { nickname: true } });
+      const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { name: true } });
+      // 받는 사람에게 '제안 도착' 알림 (만료까지 응답 기한 표시)
+      await this.notifications.notify(
+        tx,
+        input.receiverId,
+        'PROPOSAL_RECEIVED',
+        { nickname: sender.nickname ?? '', eventName: event.name, deadline: formatSeoulShort(expiresAt) },
+        { proposalId: proposal.id },
+      );
+      return proposal;
+    });
     const row = await this.prisma.proposal.findUniqueOrThrow({ where: { id: created.id }, include: proposalInclude });
     return this.toView(row, senderId);
   }
@@ -207,18 +235,65 @@ export class ProposalsService {
     if (!ov || !p.segmentIds.every((id) => ov.segmentIds.includes(id))) {
       throw new AppError('PROPOSAL_INVALID', '그사이 일정이나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
     }
+    // 약속한 날이 행사에서 없어졌으면 수락할 수 없습니다.
+    const day = p.eventDayId
+      ? await this.prisma.eventDay.findUnique({ where: { id: p.eventDayId }, include: { segments: { orderBy: { sortOrder: 'asc' } } } })
+      : null;
+    const spot = p.meetingSpotId ? await this.prisma.meetingSpot.findUnique({ where: { id: p.meetingSpotId } }) : null;
+    if (!day || !spot) throw new AppError('PROPOSAL_INVALID', '그사이 일정이나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
+    const segments = day.segments
+      .filter((s) => p.segmentIds.includes(s.id))
+      .map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime }));
+    const schedule = { date: day.date, ...appointmentWindow(day, segments), segments };
+
+    // 시간이 겹치는 약속은 만들지 않습니다. (2026-11-08 사용자 확인)
+    const range = rangeOf(schedule.date, schedule.startTime, schedule.endTime);
+    if (await this.appointments.findOverlap(userId, range)) {
+      throw new AppError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+    }
+    if (await this.appointments.findOverlap(p.senderId, range)) {
+      throw new AppError('APPOINTMENT_OVERLAP', '상대에게 그 시간에 다른 약속이 생겨서 지금은 수락할 수 없어요.');
+    }
+
     const appointment = await this.prisma.$transaction(async (tx) => {
       await this.state.transition(tx, id, 'SENT', 'ACCEPTED');
-      return this.state.createAppointment(tx, p);
+      const created = await this.appointments.createFromProposal(
+        tx,
+        { id: p.id, eventId: p.eventId, eventDayId: day.id, meetingSpotId: spot.id, senderId: p.senderId, receiverId: p.receiverId },
+        schedule,
+        spot.name,
+      );
+      await this.notifyResult(tx, p, userId, 'PROPOSAL_ACCEPTED', created.id);
+      return created;
     });
-    // TODO(4단계): 보낸 사람에게 '수락' 알림
-    return (await this.appointments(userId)).find((a) => a.id === appointment.id)!;
+    return this.appointments.get(userId, appointment.id);
+  }
+
+  /** 보낸 사람에게 수락·거절 결과 알림 */
+  private async notifyResult(
+    tx: Prisma.TransactionClient,
+    p: { id: string; senderId: string; eventId: string },
+    receiverId: string,
+    kind: 'PROPOSAL_ACCEPTED' | 'PROPOSAL_REJECTED',
+    appointmentId?: string,
+  ) {
+    const receiver = await tx.user.findUniqueOrThrow({ where: { id: receiverId }, select: { nickname: true } });
+    const event = await tx.event.findUniqueOrThrow({ where: { id: p.eventId }, select: { name: true } });
+    await this.notifications.notify(
+      tx,
+      p.senderId,
+      kind,
+      { nickname: receiver.nickname ?? '', eventName: event.name },
+      appointmentId ? { appointmentId } : { proposalId: p.id },
+    );
   }
 
   async reject(userId: string, id: string) {
-    await this.mine(userId, id, 'receiver');
-    await this.prisma.$transaction((tx) => this.state.transition(tx, id, 'SENT', 'REJECTED'));
-    // TODO(4단계): 보낸 사람에게 '거절' 알림
+    const p = await this.mine(userId, id, 'receiver');
+    await this.prisma.$transaction(async (tx) => {
+      await this.state.transition(tx, id, 'SENT', 'REJECTED');
+      await this.notifyResult(tx, p, userId, 'PROPOSAL_REJECTED');
+    });
     return { id, status: 'REJECTED' as const };
   }
 
@@ -226,31 +301,5 @@ export class ProposalsService {
     await this.mine(userId, id, 'sender');
     await this.prisma.$transaction((tx) => this.state.transition(tx, id, 'SENT', 'CANCELLED'));
     return { id, status: 'CANCELLED' as const };
-  }
-
-  async appointments(userId: string): Promise<AppointmentView[]> {
-    const rows = await this.prisma.appointment.findMany({
-      where: { participants: { some: { userId } } },
-      include: {
-        participants: { include: { user: userPublic } },
-        event: { select: { id: true, name: true } },
-        eventDay: { include: { segments: { orderBy: { sortOrder: 'asc' } } } },
-        meetingSpot: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50,
-    });
-    return rows.map((a) => ({
-      id: a.id,
-      status: a.status as AppointmentStatus,
-      counterpart: counterpart(a.participants.find((x) => x.userId !== userId)!.user),
-      event: { id: a.event.id, name: a.event.name },
-      day: { id: a.eventDay.id, date: a.eventDay.date, startTime: a.eventDay.startTime },
-      segments: a.eventDay.segments
-        .filter((s) => a.segmentIds.includes(s.id))
-        .map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime })),
-      meetingSpot: { id: a.meetingSpot.id, name: a.meetingSpot.name },
-      createdAt: a.createdAt.toISOString(),
-    }));
   }
 }

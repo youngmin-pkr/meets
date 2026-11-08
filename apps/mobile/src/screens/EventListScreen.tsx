@@ -17,13 +17,15 @@ import { colors } from '../theme';
 import { Body, ErrorText, keepWords, Page, PrimaryButton, StepHeader, styles, Title } from '../ui';
 
 export function EventListScreen(props: {
+  /** 홈의 행사 종류 바로가기로 들어오면 그 종류만 보여 줍니다 */
+  initialCategory?: EventCategory;
   onNext: (event: EventSummary) => void;
   onReport: () => void;
   onBack: () => void;
   flowError?: string | null;
 }) {
   const [query, setQuery] = useState('');
-  const [category, setCategory] = useState<EventCategory | undefined>(undefined);
+  const [category, setCategory] = useState<EventCategory | undefined>(props.initialCategory);
   const [events, setEvents] = useState<EventSummary[] | null>(null);
   const [selected, setSelected] = useState<EventSummary | null>(null);
   const [error, setError] = useState<string | null>(null);

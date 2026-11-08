@@ -54,9 +54,4 @@ export class ProposalsController {
   cancel(@CurrentUserId() userId: string, @Param('id', ParseUUIDPipe) id: string) {
     return this.proposals.cancel(userId, id);
   }
-
-  @Get('me/appointments')
-  appointments(@CurrentUserId() userId: string) {
-    return this.proposals.appointments(userId);
-  }
 }
