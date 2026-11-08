@@ -14,6 +14,9 @@ import { ManualEntryRecognizer, RANDOM, TICKET_RECOGNIZER, type RandomSource } f
 import { TicketStateService } from './tickets/ticket-state.service';
 import { TicketsController } from './tickets/tickets.controller';
 import { TicketsService } from './tickets/tickets.service';
+import { ProposalStateService } from './proposals/proposal-state.service';
+import { ProposalsController } from './proposals/proposals.controller';
+import { ProposalsService } from './proposals/proposals.service';
 import { AuthGuard } from './auth/auth.guard';
 import { SessionService } from './auth/session.service';
 import { CLOCK, systemClock, type Clock } from './common/clock';
@@ -29,7 +32,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -54,6 +57,8 @@ export class AppModule {
         TicketStateService,
         TicketsService,
         AdminTicketsService,
+        ProposalStateService,
+        ProposalsService,
       ],
     };
   }

@@ -12,8 +12,14 @@ export type Screen =
   | 'PROFILE'
   | 'FANDOM'
   | 'READY'
-  /** 가입을 마친 사람의 첫 화면: 행사 선택 */
+  /** 가입을 마친 사람의 첫 화면: 홈 (받은 제안, 다가오는 약속) */
   | 'HOME'
+  /** 행사 선택 (입력 흐름 1단계) */
+  | 'EVENTS'
+  /** 제안과 약속 */
+  | 'PROPOSALS'
+  | 'PROPOSAL_SENT'
+  | 'APPOINTMENT'
   | 'EVENT_REPORT'
   | 'EVENT_REPORTED'
   /** 입력 흐름 2~5단계 */

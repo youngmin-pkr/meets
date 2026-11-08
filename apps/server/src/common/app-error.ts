@@ -31,7 +31,12 @@ export type AppErrorCode =
   | 'TICKET_STATE'
   | 'IMAGE_INVALID'
   | 'IMAGE_TOO_LARGE'
-  | 'PLAN_NOT_ALLOWED';
+  | 'PLAN_NOT_ALLOWED'
+  | 'PROPOSAL_NEEDS_TICKET'
+  | 'PROPOSAL_INVALID'
+  | 'PROPOSAL_TOO_LATE'
+  | 'PROPOSAL_EXISTS'
+  | 'PROPOSAL_STATE';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -63,6 +68,11 @@ const STATUS: Record<AppErrorCode, number> = {
   IMAGE_INVALID: 400,
   IMAGE_TOO_LARGE: 413,
   PLAN_NOT_ALLOWED: 409,
+  PROPOSAL_NEEDS_TICKET: 403,
+  PROPOSAL_INVALID: 400,
+  PROPOSAL_TOO_LATE: 409,
+  PROPOSAL_EXISTS: 409,
+  PROPOSAL_STATE: 409,
 };
 
 export class AppError extends Error {
