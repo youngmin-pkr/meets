@@ -15,6 +15,7 @@ import {
   rangeOf,
   rangesOverlap,
   rescheduleDeadline,
+  reviewDeadline,
   seoulDateTime,
   type AppointmentEndReason,
   type AppointmentFacts,
@@ -32,6 +33,7 @@ import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
+import { TrustService } from '../trust/trust.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentStateService } from './appointment-state.service';
 
@@ -41,6 +43,7 @@ const include = {
   participants: { include: { user: userPublic } },
   event: { select: { id: true, name: true } },
   eventDay: { include: { segments: { orderBy: { sortOrder: 'asc' } } } },
+  reviews: { select: { authorId: true } },
 } satisfies Prisma.AppointmentInclude;
 
 type Row = Prisma.AppointmentGetPayload<{ include: typeof include }>;
@@ -123,6 +126,13 @@ function factsOf(a: Row): AppointmentFacts {
   };
 }
 
+/** 후기: 정상적으로 끝난 만남만, 끝나고 N일 동안, 한 번만 */
+function reviewState(a: Row, me: string, now: Date, reviewDays: number, endsAt: Date) {
+  const deadline = reviewDeadline(endsAt, reviewDays);
+  const done = a.reviews.some((r) => r.authorId === me);
+  return { canWrite: a.status === 'ENDED' && !done && now < deadline, done, deadline: deadline.toISOString() };
+}
+
 /**
  * 약속: 전날 확인, 취소, 도착·노쇼, 행사 변경·취소에 따른 변경 (정리문서 5장 "약속")
  * 시간이 되면 저절로 일어나는 일(확인 요청, 마감, 시작·끝, 보류)은 settle()에서 처리합니다.
@@ -135,6 +145,7 @@ export class AppointmentsService {
     private readonly policy: PolicyService,
     private readonly state: AppointmentStateService,
     private readonly notifications: NotificationsService,
+    private readonly trust: TrustService,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -244,12 +255,24 @@ export class AppointmentsService {
             const silent = step.noResponseUserIds.includes(p.userId);
             await this.notifications.notify(tx, p.userId, silent ? 'NO_CONFIRM_SELF' : 'NO_CONFIRM_PARTNER', base, target);
           }
+        }).then(async () => {
+          // 무응답은 신뢰 단계에 반영됩니다. (정책 값 12)
+          for (const userId of step.noResponseUserIds) await this.trust.recompute(userId);
         });
       case 'START':
         return this.prisma.$transaction((tx) => this.state.transition(tx, a.id, 'CONFIRMED', 'IN_PROGRESS'));
-      case 'END':
-        // TODO(7단계): 만남이 끝나면 후기 요청을 보냅니다. (행사 취소·중간 종료는 제외)
-        return this.prisma.$transaction((tx) => this.state.transition(tx, a.id, 'IN_PROGRESS', 'ENDED'));
+      case 'END': {
+        // 만남이 정상적으로 끝나면 양쪽에 후기 요청을 보냅니다. (행사 취소·중간 종료는 보내지 않음)
+        const days = await this.policy.getNumber('REVIEW_WINDOW_DAYS');
+        const deadline = formatSeoulShort(reviewDeadline(t.endsAt, days));
+        return this.prisma.$transaction(async (tx) => {
+          await this.state.transition(tx, a.id, 'IN_PROGRESS', 'ENDED');
+          for (const p of a.participants) {
+            const other = a.participants.find((x) => x.userId !== p.userId)!;
+            await this.notifications.notify(tx, p.userId, 'REVIEW_REQUEST', { nickname: other.user.nickname ?? '', eventName: a.event.name, deadline }, target);
+          }
+        });
+      }
       case 'HOLD':
         return this.prisma.$transaction(async (tx) => {
           await this.state.transition(tx, a.id, 'RESCHEDULING', 'ON_HOLD');
@@ -260,7 +283,7 @@ export class AppointmentsService {
 
   // ───────────── 조회 ─────────────
 
-  private toView(a: Row, me: string, now: Date, unreadMessages = 0): AppointmentView {
+  private toView(a: Row, me: string, now: Date, reviewDays: number, unreadMessages = 0): AppointmentView {
     const f = factsOf(a);
     const t = factsTimes(f);
     const mine = a.participants.find((p) => p.userId === me)!;
@@ -310,6 +333,7 @@ export class AppointmentsService {
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
       unreadMessages,
+      review: reviewState(a, me, now, reviewDays, t.endsAt),
     };
   }
 
@@ -322,8 +346,9 @@ export class AppointmentsService {
       take: 100,
     });
     const now = this.clock.now();
+    const reviewDays = await this.policy.getNumber('REVIEW_WINDOW_DAYS');
     const unread = await unreadCounts(this.prisma, userId, rows.map((a) => a.id));
-    return rows.map((a) => this.toView(a, userId, now, unread.get(a.id)));
+    return rows.map((a) => this.toView(a, userId, now, reviewDays, unread.get(a.id)));
   }
 
   /** 내 약속 하나. 약속에 없는 사람에게는 '찾을 수 없어요' (CLAUDE.md 규칙 3) */
@@ -336,7 +361,8 @@ export class AppointmentsService {
   async get(userId: string, id: string): Promise<AppointmentView> {
     await this.settle({ id, participants: { some: { userId } } });
     const unread = await unreadCounts(this.prisma, userId, [id]);
-    return this.toView(await this.load(userId, id), userId, this.clock.now(), unread.get(id));
+    const reviewDays = await this.policy.getNumber('REVIEW_WINDOW_DAYS');
+    return this.toView(await this.load(userId, id), userId, this.clock.now(), reviewDays, unread.get(id));
   }
 
   /** 같은 약속을 동시에 바꾸지 않도록 줄을 세웁니다. (둘이 동시에 '갈 수 있어요'를 눌러도 한 번만 확정) */
@@ -473,6 +499,8 @@ export class AppointmentsService {
         { appointmentId: a.id },
       );
     });
+    // 임박 취소는 신뢰 단계에 반영됩니다. (정책 값 12)
+    if (late) await this.trust.recompute(userId);
     return this.get(userId, id);
   }
 
@@ -567,6 +595,41 @@ export class AppointmentsService {
       changed++;
     }
     return changed;
+  }
+
+  /**
+   * 차단하면 둘 사이의 진행 중인 약속을 끝냅니다. (같은 트랜잭션 안)
+   * 차단한 사람에게는 임박 취소 기록을 남기지 않고, 상대에게는 이유 없이 '약속이 취소됐어요'만 알립니다. (2026-11-09 사용자 확인)
+   * 만남 중이면 '중간 종료'로 끝납니다.
+   */
+  async endForBlock(tx: Prisma.TransactionClient, blockerId: string, otherId: string) {
+    const now = this.clock.now();
+    const rows = await tx.appointment.findMany({
+      where: {
+        status: { in: ENDABLE },
+        AND: [{ participants: { some: { userId: blockerId } } }, { participants: { some: { userId: otherId } } }],
+      },
+      include,
+    });
+    for (const a of rows) {
+      const to: AppointmentStatus = a.status === 'IN_PROGRESS' ? 'ENDED_EARLY' : 'CANCELLED';
+      await this.state.transition(tx, a.id, a.status as AppointmentStatus, to, {
+        endReason: 'CANCELLED' satisfies AppointmentEndReason,
+        cancelledById: blockerId,
+      });
+      await tx.appointmentParticipant.update({
+        where: { appointmentId_userId: { appointmentId: a.id, userId: blockerId } },
+        data: { cancelledAt: now, lateCancel: false },
+      });
+      await this.notifications.notify(
+        tx,
+        otherId,
+        'APPOINTMENT_CANCELLED',
+        { nickname: this.nickname(a, blockerId), eventName: a.event.name, reason: null },
+        { appointmentId: a.id },
+      );
+    }
+    return rows.length;
   }
 
   /** 행사가 취소되었을 때: 약속을 모두 자동 종료하고 안내합니다. 후기 요청은 보내지 않습니다. */

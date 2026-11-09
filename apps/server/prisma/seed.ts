@@ -79,6 +79,8 @@ async function main() {
         avatarInitial: avatarInitial(p.nickname),
         avatarColor: p.avatarColor,
         ageClass: 'ADULT',
+        // 쌓인 신뢰를 가진 예시 사용자 (후보 카드에 '쌓인 신뢰' 표시를 보여 주려고)
+        trustLevel: p.trusted ? 4 : 1,
         fandomPublic: p.fandomPublic,
         profileCompletedAt: now,
         fandomStepCompletedAt: now,

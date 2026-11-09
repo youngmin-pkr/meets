@@ -6,6 +6,20 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  BLOCK_SOURCE_LABELS,
+  CHAT_EXTENDED_LINE,
+  checkReviewInput,
+  computeTrust,
+  REPORT_CATEGORY_CODES,
+  REVIEW_PROBLEM_MESSAGES,
+  reviewDeadline,
+  trustView,
+  type BlockSource,
+  type BlockView,
+  type ReportCategory,
+  type ReviewAgain,
+  type ReviewOverall,
+  type TrustView,
   arrivedLine,
   CHAT_STATUS_LINES,
   chatClosesAt,
@@ -222,6 +236,8 @@ interface DemoAppointment {
   sampleConfirmAt: number | null;
   /** 취소·중간 종료·자동 종료·종료된 시각 (채팅 닫힘 계산) */
   endedAt: Date | null;
+  /** 서로 '또 같이 가고 싶어요'를 골라 만남이 끝나도 채팅이 닫히지 않음 */
+  chatExtended: boolean;
   /** 앱 안 채팅 */
   messages: DemoMessage[];
   /** 사람별로 어디까지 읽었는지 */
@@ -330,6 +346,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   const proposals: DemoProposal[] = [];
   const appointments: DemoAppointment[] = [];
   const notifications: Array<NotificationView & { userId: string }> = [];
+  /** 차단: 키는 '차단한 사람>차단당한 사람' */
+  const blockMap = new Map<string, { blockerId: string; blockedId: string; source: BlockSource; at: Date }>();
+  const reviews: Array<{ appointmentId: string; authorId: string; targetId: string; overall: ReviewOverall; again: ReviewAgain }> = [];
+  const reports: Array<{ id: string; reporterId: string; appointmentId: string; category: ReportCategory; open: boolean }> = [];
+  const isBlockedBetween = (x: string, y: string) => blockMap.has(`${x}>${y}`) || blockMap.has(`${y}>${x}`);
   let notificationSeq = 0;
   /** 데모 전용: 예시 사용자가 이미 제안을 보낸 (사용자|행사) */
   const sampleProposed = new Set<string>();
@@ -350,7 +371,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   /** viewer가 보는 후보 중 other (조건을 넓힌 경우까지) */
   function candidateFor(viewerId: string, eventId: string, otherId: string) {
     const { days } = visibleEvent(eventId);
-    const all = profiles(eventId);
+    const all = profilesFor(viewerId, eventId);
     const viewer = all.find((p) => p.userId === viewerId);
     if (!viewer) return null;
     const today = isoOf(todayInSeoul(now()));
@@ -456,9 +477,13 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       case 'START':
         setStatus(a, 'IN_PROGRESS');
         return;
-      case 'END':
+      case 'END': {
+        // 정상적으로 끝난 만남은 양쪽에 후기 요청을 보냅니다. (취소·중간 종료·행사 취소는 보내지 않음)
         setStatus(a, 'ENDED');
+        const deadline = formatSeoulShort(reviewDeadline(t.endsAt, POLICY_DEFAULTS.REVIEW_WINDOW_DAYS));
+        for (const u of a.users) notify(u, 'REVIEW_REQUEST', { nickname: nicknameOf(a.users.find((x) => x !== u)!), eventName: eventName(a.eventId), deadline }, target);
         return;
+      }
       case 'HOLD':
         setStatus(a, 'ON_HOLD');
         for (const u of a.users) notify(u, 'APPOINTMENT_ON_HOLD', base, target);
@@ -512,6 +537,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       createdAt: now().getTime(),
       sampleConfirmAt: null,
       endedAt: null,
+      chatExtended: false,
       messages: [],
       readSeq: {},
       sampleReplyAt: null,
@@ -542,8 +568,10 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   }
 
   function chatClosesAtOf(a: DemoAppointment) {
+    // 차단한 두 사람의 채팅은 닫힙니다. (지난 대화는 읽을 수 있음)
+    if (isBlockedBetween(a.users[0], a.users[1])) return now();
     return chatClosesAt(
-      { status: a.status, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt },
+      { status: a.status, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended },
       { closeHoursAfterEnd: POLICY_DEFAULTS.CHAT_CLOSE_HOURS_AFTER_END },
     );
   }
@@ -624,7 +652,15 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
       unreadMessages: unreadOf(a, me),
+      review: reviewStateOf(a, me, t.endsAt),
     };
+  }
+
+  /** 후기: 정상적으로 끝난 만남만, 끝나고 N일 동안, 한 번만 */
+  function reviewStateOf(a: DemoAppointment, me: string, endsAt: Date) {
+    const deadline = reviewDeadline(endsAt, POLICY_DEFAULTS.REVIEW_WINDOW_DAYS);
+    const done = reviews.some((r) => r.appointmentId === a.id && r.authorId === me);
+    return { canWrite: a.status === 'ENDED' && !done && now() < deadline, done, deadline: deadline.toISOString() };
   }
 
   /** 내 약속 하나 (약속에 없는 사람에게는 '찾을 수 없어요') */
@@ -634,6 +670,103 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     const a = appointments.find((x) => x.id === id && x.users.includes(user.id));
     if (!a) throw new ApiError('NOT_FOUND', '약속을 찾을 수 없어요.');
     return { user, a };
+  }
+
+  /** 내 신뢰 단계 (서버의 TrustService와 같은 규칙) */
+  function trustOf(userId: string): TrustView {
+    const since = now().getTime() - POLICY_DEFAULTS.TRUST_DOWN_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const mineAppointments = appointments.filter((a) => a.users.includes(userId));
+    const recent = (a: DemoAppointment) => (a.endedAt?.getTime() ?? 0) >= since;
+    const facts = {
+      everPlanned: [...plans].some((k) => k.startsWith(`${userId}|`)),
+      everVerified: [...tickets.values()].some((t) => t.userId === userId && t.status === 'VERIFIED'),
+      positiveReviews: reviews.filter((r) => r.targetId === userId && (r.overall === 'GREAT' || r.overall === 'OK')).length,
+      upheldReports: 0,
+      recentBadRecords: mineAppointments.filter(
+        (a) => recent(a) && ((a.endReason === 'CANCELLED' && a.cancelledBy === userId && a.parts[userId].lateCancel) || a.parts[userId].noResponse),
+      ).length,
+    };
+    const policy = { upReviewCount: POLICY_DEFAULTS.TRUST_UP_REVIEW_COUNT, downCount: POLICY_DEFAULTS.TRUST_DOWN_COUNT };
+    return trustView(computeTrust(facts, policy).level, facts, policy);
+  }
+
+  /** 차단: 서로 후보에서 숨기고, 답을 기다리는 제안은 조용히 취소하고, 진행 중인 약속은 끝냅니다. 상대에게는 알리지 않습니다. */
+  function blockInternal(blockerId: string, blockedId: string, source: BlockSource) {
+    if (!blockMap.has(`${blockerId}>${blockedId}`)) blockMap.set(`${blockerId}>${blockedId}`, { blockerId, blockedId, source, at: now() });
+    for (const p of proposals) {
+      const between = (p.senderId === blockerId && p.receiverId === blockedId) || (p.senderId === blockedId && p.receiverId === blockerId);
+      if (between && p.status === 'SENT') p.status = 'CANCELLED';
+    }
+    for (const a of appointments) {
+      if (!a.users.includes(blockerId) || !a.users.includes(blockedId)) continue;
+      if (!['PENDING_CONFIRM', 'CONFIRMED', 'IN_PROGRESS', 'RESCHEDULING', 'ON_HOLD'].includes(a.status)) continue;
+      // 차단한 사람에게는 임박 취소 기록을 남기지 않고, 상대에게는 이유 없이 '취소'로만 보입니다.
+      setStatus(a, a.status === 'IN_PROGRESS' ? 'ENDED_EARLY' : 'CANCELLED');
+      a.endReason = 'CANCELLED';
+      a.cancelledBy = blockerId;
+      a.parts[blockerId].lateCancel = false;
+      notify(blockedId, 'APPOINTMENT_CANCELLED', { nickname: nicknameOf(blockerId), eventName: eventName(a.eventId), reason: null }, { appointmentId: a.id });
+    }
+  }
+
+  /** 차단 관계를 뺀 매칭 정보. 보는 사람에게는 서로 '또 같이 가고 싶어요'를 고른 사람을 붙입니다. */
+  function profilesFor(viewerId: string, eventId: string): MatchProfile[] {
+    const all = profiles(eventId).filter((p) => p.userId === viewerId || !isBlockedBetween(viewerId, p.userId));
+    const reunion = appointments
+      .filter((a) => a.chatExtended && a.users.includes(viewerId))
+      .map((a) => a.users.find((u) => u !== viewerId)!)
+      .filter((u) => !isBlockedBetween(viewerId, u));
+    return all.map((p) => (p.userId === viewerId ? { ...p, reunionWith: reunion } : p));
+  }
+
+  /**
+   * 데모 전용: 가입을 마치면 '어제 끝난 만남'도 하나 넣어 둡니다. 후기 남기기를 바로 해 볼 수 있도록 후기 요청이 와 있고,
+   * 예시 상대(지우)는 이미 '또 같이 가고 싶어요'를 골랐습니다. (사용자도 고르면 서로 이어집니다)
+   */
+  function seedPastAppointment(userId: string) {
+    const ev = events[0].detail;
+    const spot = ev.meetingSpots[0];
+    const partner = `demo-sample-${SAMPLE_PEOPLE[1].key}`;
+    const today = todayInSeoul(now());
+    const y = new Date(Date.UTC(today.year, today.month - 1, today.day - 1));
+    const date = y.toISOString().slice(0, 10);
+    if (!spot) return;
+    const a: DemoAppointment = {
+      id: `demo-appointment-${appointments.length + 1}`,
+      proposalId: 'demo-proposal-past',
+      eventId: ev.id,
+      eventDayId: null,
+      meetingSpotId: spot.id,
+      meetingSpotName: spot.name,
+      users: [partner, userId],
+      status: 'ENDED',
+      date,
+      startTime: '15:00',
+      endTime: '17:00',
+      segments: [{ id: 'demo-segment-past', label: '굿즈 줄', startTime: '15:00', endTime: '17:00' }],
+      policy: DEMO_APPOINTMENT_POLICY,
+      rescheduleDeadline: null,
+      confirmOpensAt: null,
+      endReason: null,
+      cancelledBy: null,
+      cancelReason: null,
+      parts: { [partner]: emptyPart(), [userId]: emptyPart() },
+      createdAt: now().getTime() - 3 * 24 * 60 * 60 * 1000,
+      sampleConfirmAt: null,
+      endedAt: seoulDateTime(date, '17:00'),
+      chatExtended: false,
+      messages: [],
+      readSeq: {},
+      sampleReplyAt: null,
+      sampleReplies: SAMPLE_REPLIES.length,
+    };
+    appointments.push(a);
+    for (const status of ['PENDING_CONFIRM', 'CONFIRMED', 'ENDED'] as const) addMessage(a, null, 'SYSTEM', CHAT_STATUS_LINES[status]!);
+    addMessage(a, partner, 'TEXT', '오늘 같이 줄 서서 즐거웠어요! 덕분에 시간이 빨리 갔어요.');
+    a.readSeq[userId] = messageSeq;
+    reviews.push({ appointmentId: a.id, authorId: partner, targetId: userId, overall: 'GREAT', again: 'YES' });
+    const deadline = formatSeoulShort(reviewDeadline(seoulDateTime(date, '17:00'), POLICY_DEFAULTS.REVIEW_WINDOW_DAYS));
+    notify(userId, 'REVIEW_REQUEST', { nickname: nicknameOf(partner), eventName: ev.name, deadline }, { appointmentId: a.id });
   }
 
   /**
@@ -745,6 +878,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
           fandomIds: p.fandoms.map((n) => fandomIdByName.get(n)).filter((x): x is string => !!x),
           grade: plan.ticket === 'VERIFIED' ? 'VERIFIED' : plan.ticket === 'PLANNED' && !event.ticketRequired ? 'PLANNED' : null,
           admissibleDayIds: plan.ticket === 'VERIFIED' ? plan.days.map((i) => event.days[i]?.id).filter((x): x is string => !!x) : null,
+          trusted: p.trusted ?? false,
           days: plan.days
             .filter((i) => event.days[i])
             .map((i) => ({
@@ -791,6 +925,8 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       overlaps: c.overlaps,
       bestOverlapMinutes: c.bestOverlapMinutes,
       shortStart: c.shortStart,
+      trusted: c.trusted,
+      reunion: c.reunion,
       summary: describeCandidate(c),
     };
   }
@@ -798,7 +934,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   function matchContext(eventId: string) {
     const user = currentUser();
     const { days } = visibleEvent(eventId);
-    const all = profiles(eventId);
+    const all = profilesFor(user.id, eventId);
     const viewer = all.find((p) => p.userId === user.id);
     if (!viewer) throw new ApiError('PREFERENCE_REQUIRED', '먼저 일정과 스타일을 알려 주세요.');
     const today = isoOf(todayInSeoul(now()));
@@ -915,7 +1051,10 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         throw new ApiError('NOTIFICATION_ALREADY_ASKED', '알림 설정은 이미 골랐어요.');
       }
       user.notificationChoice = granted ? 'ALLOWED' : 'DENIED';
-      if (!user.signupDone) seedTomorrowAppointment(user.id);
+      if (!user.signupDone) {
+        seedPastAppointment(user.id);
+        seedTomorrowAppointment(user.id);
+      }
       user.signupDone = true;
       return delay(toMe(user));
     },
@@ -1371,6 +1510,95 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       a.readSeq[user.id] = m.seq;
       if (a.users.some(isSample) && a.sampleReplyAt === null) a.sampleReplyAt = now().getTime() + autoAcceptDelayMs;
       return delay(messageView(m, user.id));
+    },
+
+    async submitReview(id, input) {
+      const { user, a } = myAppointment(id);
+      if (a.status !== 'ENDED') throw new ApiError('REVIEW_NOT_ALLOWED', '정상적으로 끝난 만남에만 후기를 남길 수 있어요.');
+      const view = reviewStateOf(a, user.id, factsTimes(factsOf(a)).endsAt);
+      if (view.done) throw new ApiError('REVIEW_EXISTS', '이미 후기를 남겼어요.');
+      if (!view.canWrite) throw new ApiError('REVIEW_NOT_ALLOWED', `후기는 만남이 끝나고 ${POLICY_DEFAULTS.REVIEW_WINDOW_DAYS}일 안에 남길 수 있어요.`);
+      const problem = checkReviewInput(input);
+      if (problem) throw new ApiError('REVIEW_INVALID', REVIEW_PROBLEM_MESSAGES[problem]);
+      const other = a.users.find((u) => u !== user.id)!;
+      const again: ReviewAgain = input.overall === 'UNCOMFORTABLE' || input.hideTarget ? 'NO' : input.again;
+      reviews.push({ appointmentId: a.id, authorId: user.id, targetId: other, overall: input.overall, again });
+      // 서로 '또 같이 가고 싶어요'를 골랐을 때만 연결됩니다. 한쪽만 고르면 상대에게 아무것도 알려지지 않습니다.
+      const theirs = reviews.find((r) => r.appointmentId === a.id && r.authorId === other);
+      const mutual = again === 'YES' && theirs?.again === 'YES' && !isBlockedBetween(user.id, other);
+      if (mutual) {
+        a.chatExtended = true;
+        addMessage(a, null, 'SYSTEM', CHAT_EXTENDED_LINE);
+        notify(user.id, 'REVIEW_MUTUAL_AGAIN', { nickname: nicknameOf(other), eventName: eventName(a.eventId) }, { appointmentId: a.id });
+      }
+      if (input.hideTarget) blockInternal(user.id, other, 'REVIEW');
+      return delay({ done: true as const, mutual });
+    },
+
+    async blockUser(userId) {
+      const user = currentUser();
+      if (userId === user.id) throw new ApiError('BLOCK_INVALID', '나 자신은 차단할 수 없어요.');
+      if (!people.has(userId) && !users.some((u) => u.id === userId)) throw new ApiError('NOT_FOUND', '사용자를 찾을 수 없어요.');
+      settle();
+      blockInternal(user.id, userId, 'ME');
+      return delay({ blocked: true as const });
+    },
+
+    async blockCounterpart(appointmentId) {
+      const { user, a } = myAppointment(appointmentId);
+      blockInternal(user.id, a.users.find((u) => u !== user.id)!, 'CHAT');
+      return delay({ blocked: true as const });
+    },
+
+    async unblockUser(userId) {
+      const user = currentUser();
+      blockMap.delete(`${user.id}>${userId}`);
+      return delay({ blocked: false as const });
+    },
+
+    async listBlocks() {
+      const user = currentUser();
+      const list: BlockView[] = [...blockMap.values()]
+        .filter((b) => b.blockerId === user.id)
+        .sort((x, y) => y.at.getTime() - x.at.getTime())
+        .map((b) => {
+          const c = counterpartOf(b.blockedId);
+          const last = appointments
+            .filter((a) => a.users.includes(user.id) && a.users.includes(b.blockedId))
+            .sort((x, y) => y.createdAt - x.createdAt)[0];
+          return {
+            userId: b.blockedId,
+            nickname: c.nickname,
+            avatarInitial: c.avatarInitial,
+            avatarColor: c.avatarColor,
+            blockedAt: b.at.toISOString(),
+            sourceLabel: BLOCK_SOURCE_LABELS[b.source],
+            lastAppointmentId: last?.id ?? null,
+          };
+        });
+      return delay(list);
+    },
+
+    async sendReport(input) {
+      const { user, a } = myAppointment(input.appointmentId);
+      if (!REPORT_CATEGORY_CODES.includes(input.category)) throw new ApiError('REPORT_INVALID', '어떤 일이었는지 골라 주세요.');
+      const detail = input.detail?.trim() ?? '';
+      if ([...detail].length > POLICY_DEFAULTS.REPORT_DETAIL_MAX_LENGTH) {
+        throw new ApiError('REPORT_INVALID', `자세한 내용은 ${POLICY_DEFAULTS.REPORT_DETAIL_MAX_LENGTH}자까지 적을 수 있어요.`);
+      }
+      if (reports.some((r) => r.reporterId === user.id && r.appointmentId === a.id && r.open)) {
+        throw new ApiError('REPORT_EXISTS', '이 약속은 이미 신고했어요. 운영팀이 확인하고 있어요.');
+      }
+      const id = `demo-report-${reports.length + 1}`;
+      reports.push({ id, reporterId: user.id, appointmentId: a.id, category: input.category, open: true });
+      if (input.alsoBlock) blockInternal(user.id, a.users.find((u) => u !== user.id)!, 'REPORT');
+      return delay({ id, received: true as const, blocked: input.alsoBlock });
+    },
+
+    async getTrust() {
+      const user = currentUser();
+      settle();
+      return delay(trustOf(user.id));
     },
 
     async getHomeSummary() {

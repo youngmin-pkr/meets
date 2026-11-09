@@ -50,6 +50,9 @@ import { ProposalSentScreen, ProposalsScreen } from './src/screens/ProposalScree
 import { AppointmentScreen, CancelAppointmentScreen, HomeScreen, NotificationsScreen } from './src/screens/AppointmentScreens';
 import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
 import { ChatListScreen, ChatRulesScreen, ChatScreen } from './src/screens/ChatScreens';
+import { BlockListScreen, MyPageScreen, TrustLevelScreen } from './src/screens/MyScreens';
+import { ReportScreen, ReviewAgainScreen, ReviewDoneScreen, ReviewPickScreen, ReviewStartScreen } from './src/screens/ReviewScreens';
+import { chooseOverall, initialReviewDraft, type ReviewDraft } from './src/reviewFlow';
 import type { Tab } from './src/ui';
 
 export default function App() {
@@ -77,6 +80,12 @@ export default function App() {
   const [appointment, setAppointment] = useState<AppointmentView | null>(null);
   const [justAccepted, setJustAccepted] = useState(false);
   const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
+  // 후기와 신고
+  const [reviewAppt, setReviewAppt] = useState<AppointmentView | null>(null);
+  const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(initialReviewDraft());
+  const [reviewResult, setReviewResult] = useState<{ mutual: boolean; reported: boolean }>({ mutual: false, reported: false });
+  const [reportBack, setReportBack] = useState<Screen>('HOME');
+  const [reportFromReview, setReportFromReview] = useState(false);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatBack, setChatBack] = useState<Screen>('CHATS');
   const [focusSearch, setFocusSearch] = useState(false);
@@ -148,6 +157,22 @@ export default function App() {
       setFocusSearch(false);
     }
     setScreen(t);
+  }
+
+  /** 후기 시작 */
+  function startReview(a: AppointmentView) {
+    setReviewAppt(a);
+    setReviewDraft(initialReviewDraft());
+    setReviewResult({ mutual: false, reported: false });
+    setScreen('REVIEW_START');
+  }
+
+  /** 신고 화면 (돌아갈 곳을 함께 기억) */
+  function openReport(a: AppointmentView, back: Screen, fromReview = false) {
+    setReviewAppt(a);
+    setReportBack(back);
+    setReportFromReview(fromReview);
+    setScreen('REPORT');
   }
 
   function openChat(appointmentId: string, from: Screen) {
@@ -307,6 +332,7 @@ export default function App() {
               setScreen('EVENTS');
             }}
             onOpenEvent={startFlow}
+            onReview={startReview}
             onProposals={() => setScreen('PROPOSALS')}
             onAppointment={(a) => openAppointment(a)}
             onNotifications={() => setScreen('NOTIFICATIONS')}
@@ -363,7 +389,68 @@ export default function App() {
             onRules={() => setScreen('CHAT_RULES')}
           />
         )}
-        {screen === 'CHAT_RULES' && <ChatRulesScreen onBack={() => setScreen('CHAT')} />}
+        {screen === 'CHAT_RULES' && chatId && (
+          <ChatRulesScreen
+            appointmentId={chatId}
+            onBack={() => setScreen('CHAT')}
+            onReport={(a) => openReport(a, 'CHAT_RULES')}
+            onBlocked={() => setScreen('CHATS')}
+          />
+        )}
+        {screen === 'ME' && (
+          <MyPageScreen
+            nickname={me?.nickname ?? ''}
+            avatarInitial={me?.avatarInitial ?? null}
+            onTab={goTab}
+            onTrust={() => setScreen('TRUST')}
+            onBlocks={() => setScreen('BLOCKS')}
+            onProposals={() => setScreen('PROPOSALS')}
+            onNotifications={() => setScreen('NOTIFICATIONS')}
+          />
+        )}
+        {screen === 'TRUST' && <TrustLevelScreen onBack={() => setScreen('ME')} onEvents={() => goTab('EVENTS')} />}
+        {screen === 'BLOCKS' && <BlockListScreen onBack={() => setScreen('ME')} onReport={(a) => openReport(a, 'BLOCKS')} />}
+        {screen === 'REVIEW_START' && reviewAppt && (
+          <ReviewStartScreen
+            appointment={reviewAppt}
+            onLater={() => setScreen('HOME')}
+            onChoose={(overall) => {
+              const r = chooseOverall(reviewDraft, overall);
+              setReviewDraft(r.draft);
+              if (r.next === 'REPORT') openReport(reviewAppt, 'REVIEW_START', true);
+              else setScreen(r.next);
+            }}
+          />
+        )}
+        {screen === 'REVIEW_PICK' && (
+          <ReviewPickScreen draft={reviewDraft} onChange={setReviewDraft} onBack={() => setScreen('REVIEW_START')} onNext={() => setScreen('REVIEW_AGAIN')} />
+        )}
+        {screen === 'REVIEW_AGAIN' && reviewAppt && (
+          <ReviewAgainScreen
+            appointment={reviewAppt}
+            draft={reviewDraft}
+            onChange={setReviewDraft}
+            onBack={() => setScreen('REVIEW_PICK')}
+            onSent={(r) => {
+              setReviewResult({ mutual: r.mutual, reported: false });
+              setScreen('REVIEW_DONE');
+            }}
+          />
+        )}
+        {screen === 'REVIEW_DONE' && reviewAppt && (
+          <ReviewDoneScreen appointment={reviewAppt} result={reviewResult} onTrust={() => setScreen('TRUST')} onEvents={() => goTab('EVENTS')} />
+        )}
+        {screen === 'REPORT' && reviewAppt && (
+          <ReportScreen
+            appointment={reviewAppt}
+            fromReview={reportFromReview}
+            onBack={() => setScreen(reportBack)}
+            onSent={() => {
+              setReviewResult({ mutual: false, reported: true });
+              setScreen('REVIEW_DONE');
+            }}
+          />
+        )}
         {screen === 'NOTIFICATIONS' && (
           <NotificationsScreen
             onBack={() => setScreen('HOME')}

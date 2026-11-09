@@ -103,3 +103,20 @@ export function fixtures(app: INestApplication) {
 
   return { prisma, createEvent, member, ready, propose, appoint, setup };
 }
+
+/** 약속을 끝낸 상태로 만들기: 둘 다 전날 확인 → 약속 시간이 지남. clock을 약속이 끝난 시각으로 옮깁니다. */
+export async function finishAppointment(
+  app: INestApplication,
+  clock: { current: Date },
+  appointmentId: string,
+  people: Array<{ token: string }>,
+  opts: { day?: 0 | 1; end?: string } = {},
+) {
+  const date = opts.day === 1 ? '2026-12-13' : '2026-12-12';
+  const prev = opts.day === 1 ? '2026-12-12' : '2026-12-11';
+  clock.current = kst(`${prev}T18:00:00`);
+  for (const p of people) await http(app).post(`/appointments/${appointmentId}/confirm`).set(auth(p.token)).send({}).expect(200);
+  clock.current = kst(`${date}T${opts.end ?? '17:00'}:00`);
+  // 상태를 반영하려면 약속을 한 번 봐야 합니다.
+  await http(app).get(`/appointments/${appointmentId}`).set(auth(people[0].token)).expect(200);
+}

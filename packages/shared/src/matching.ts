@@ -35,6 +35,10 @@ export interface MatchProfile {
   grade?: 'VERIFIED' | 'PLANNED' | null;
   /** 티켓으로 입장할 수 있는 날. 인증한 사람은 이 날만 후보로 봅니다. (없으면 제한 없음) */
   admissibleDayIds?: string[] | null;
+  /** 신뢰 4단계 '쌓인 신뢰' (보여 주기만 하고 순서에는 영향이 없음) */
+  trusted?: boolean;
+  /** 서로 '또 같이 가고 싶어요'를 고른 사람들 (보는 사람의 프로필에만 채움). 후보 목록 맨 위에 보입니다. */
+  reunionWith?: string[];
 }
 
 /** 티켓으로 입장할 수 있는 날만 남긴 일정 (정리문서 3장 여러 날 행사) */
@@ -88,6 +92,9 @@ export interface MatchCandidate {
   bestOverlapMinutes: number;
   /** 몰입도 범위를 넓혀서 들어온 후보 → '짧은 구간부터 시작해 보세요' */
   shortStart: boolean;
+  trusted: boolean;
+  /** 서로 '또 같이 가고 싶어요'를 고른 사이 */
+  reunion: boolean;
 }
 
 export interface MatchResult {
@@ -193,6 +200,8 @@ function narrowed(
       sharedPromises: viewer.must.promises.filter((p) => o.must.promises.includes(p)),
       overlaps,
       bestOverlapMinutes: Math.max(...overlaps.map((x) => x.minutes)),
+      trusted: o.trusted ?? false,
+      reunion: viewer.reunionWith?.includes(o.userId) ?? false,
     }));
 }
 
@@ -204,6 +213,7 @@ function sortCandidates(list: MatchCandidate[], sort: MatchOptions['sort']): Mat
       return b.bestOverlapMinutes - a.bestOverlapMinutes || a.immersionGap - b.immersionGap || a.userId.localeCompare(b.userId);
     }
     return (
+      Number(b.reunion) - Number(a.reunion) || // 서로 '또 같이 가고 싶어요'를 고른 사람은 맨 위
       a.immersionGap - b.immersionGap || // 3단계: 몰입도가 가까운 순
       Number(b.sameFan) - Number(a.sameFan) || // 4단계: 같은 순위면 같은 팬 먼저
       gradeRank(a.grade) - gradeRank(b.grade) || // 그다음 티켓 인증 → 참석 예정 → 인증 전 (사용자 결정)
@@ -291,6 +301,10 @@ export interface CandidateCard {
   overlaps: DayOverlap[];
   bestOverlapMinutes: number;
   shortStart: boolean;
+  /** 쌓인 신뢰 (신뢰 4단계) */
+  trusted: boolean;
+  /** 서로 '또 같이 가고 싶어요'를 고른 사이 */
+  reunion: boolean;
   summary: string;
 }
 

@@ -25,6 +25,16 @@ export type Screen =
   | 'NOTIFICATIONS'
   /** 앱 안 채팅 */
   | 'CHATS'
+  /** 나 탭, 신뢰 단계, 차단한 사람 */
+  | 'ME'
+  | 'TRUST'
+  | 'BLOCKS'
+  /** 후기와 신고 */
+  | 'REVIEW_START'
+  | 'REVIEW_PICK'
+  | 'REVIEW_AGAIN'
+  | 'REVIEW_DONE'
+  | 'REPORT'
   | 'CHAT'
   | 'CHAT_RULES'
   | 'EVENT_REPORT'

@@ -37,6 +37,8 @@ export const APPOINTMENT_TRANSITIONS: Array<{ from: AppointmentStatus; to: Appoi
   { from: 'PENDING_CONFIRM', to: 'RESCHEDULING', condition: '행사 일정이 바뀜 (확정 전이어도 같음, 2026-11-08 추가)' },
   { from: 'RESCHEDULING', to: 'CONFIRMED', condition: '양쪽이 바뀐 일정을 다시 확인' },
   { from: 'RESCHEDULING', to: 'ON_HOLD', condition: '기한 안에 정하지 못함. 신뢰 단계 영향 없음' },
+  { from: 'RESCHEDULING', to: 'CANCELLED', condition: '차단으로 약속이 끝남 (2026-11-09 추가)' },
+  { from: 'ON_HOLD', to: 'CANCELLED', condition: '차단으로 약속이 끝남 (2026-11-09 추가)' },
   ...(['PENDING_CONFIRM', 'CONFIRMED', 'IN_PROGRESS', 'RESCHEDULING', 'ON_HOLD'] as AppointmentStatus[]).map((from) => ({
     from,
     to: 'AUTO_ENDED' as AppointmentStatus,
@@ -302,6 +304,8 @@ export interface AppointmentView {
   needsAction: boolean;
   /** 이 약속 채팅에서 내가 아직 읽지 않은 상대 메시지 수 */
   unreadMessages: number;
+  /** 후기: 남길 수 있는지, 이미 남겼는지, 마지막 시각 (후기 내용은 어디에도 돌려주지 않음) */
+  review: { canWrite: boolean; done: boolean; deadline: string };
 }
 
 /** D-day 글 (한국 날짜 기준) */

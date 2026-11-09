@@ -8,6 +8,7 @@ import {
 import { AuditService } from '../admin/audit.service';
 import { AppError } from '../common/app-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { TrustService } from '../trust/trust.service';
 import { TicketStateService } from './ticket-state.service';
 
 const PENDING = ['REVIEW_PENDING', 'REVERIFYING'] as const;
@@ -24,6 +25,7 @@ export class AdminTicketsService {
     private readonly prisma: PrismaService,
     private readonly state: TicketStateService,
     private readonly audit: AuditService,
+    private readonly trust: TrustService,
   ) {}
 
   async queue(adminId: string) {
@@ -95,6 +97,7 @@ export class AdminTicketsService {
       await this.audit.record({ actorId: adminId, action: 'TICKET_APPROVE', targetType: 'TicketVerification', targetId: id }, tx);
     });
     // TODO(4단계): 결과를 알림으로 알려 줍니다.
+    await this.trust.recompute(v.userId); // 승인되면 신뢰 단계(3단계)에 반영됩니다.
     return { id, status: 'VERIFIED' as const };
   }
 

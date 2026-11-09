@@ -12,3 +12,6 @@ export * from './proposal';
 export * from './appointment';
 export * from './notification';
 export * from './chat';
+export * from './review';
+export * from './trust';
+export * from './report';

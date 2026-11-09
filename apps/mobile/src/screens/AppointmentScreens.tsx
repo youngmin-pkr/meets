@@ -59,6 +59,8 @@ export function HomeScreen(props: {
   /** 검색창을 누르면 행사 탭의 검색으로 */
   onSearch: () => void;
   onOpenEvent: (e: EventSummary) => void;
+  /** 후기를 남길 수 있는 만남 하나를 골라 후기 시작 화면으로 */
+  onReview: (a: AppointmentView) => void;
   onProposals: () => void;
   onAppointment: (a: AppointmentView) => void;
   onNotifications: () => void;
@@ -91,6 +93,7 @@ export function HomeScreen(props: {
   const todos = upcoming.map((a) => ({ a, text: todoText(a, today) })).filter((x) => x.text);
   const soonest = received.map((p) => p.expiresAt).sort()[0];
   const chatUnread = appointments.reduce((n, a) => n + a.unreadMessages, 0);
+  const reviewable = appointments.filter((a) => a.review.canWrite);
 
   return (
     <Page tabBar={<TabBar current="HOME" onChange={props.onTab} chatUnread={chatUnread} />}>
@@ -180,6 +183,20 @@ export function HomeScreen(props: {
         </View>
         <Arrow />
       </Pressable>
+
+      {reviewable.length > 0 ? (
+        <Pressable
+          onPress={() => props.onReview(reviewable[0])}
+          accessibilityRole="button"
+          style={[styles.row, { padding: 16, borderRadius: 14, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.muted }]}
+        >
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink }}>후기를 남겨 주세요</Text>
+            <Text style={[{ fontSize: 12, color: colors.muted }, keepWords]}>{`지난 만남 ${reviewable.length}건 · 점수 없이 상황만 골라요`}</Text>
+          </View>
+          <Arrow color={colors.muted} />
+        </Pressable>
+      ) : null}
 
       <View style={{ gap: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>

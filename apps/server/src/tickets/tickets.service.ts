@@ -17,6 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { maskTicketImage } from './ticket-image';
 import { RANDOM, TICKET_RECOGNIZER, type RandomSource, type TicketRecognizer } from './ticket-recognizer';
 import { TicketStateService } from './ticket-state.service';
+import { TrustService } from '../trust/trust.service';
 import type { MaskBoxDto } from './tickets.dto';
 
 /** 사용자 앱의 티켓 인증 */
@@ -30,6 +31,7 @@ export class TicketsService {
     @Inject(RANDOM) private readonly random: RandomSource,
     @Inject(SERVER_CONFIG) private readonly config: ServerConfig,
     @Inject(CLOCK) private readonly clock: Clock,
+    private readonly trust: TrustService,
   ) {}
 
   private todayIso() {
@@ -183,6 +185,8 @@ export class TicketsService {
       await tx.ticketHash.upsert({ where: { hash }, update: { verificationId }, create: { hash, verificationId } });
       return 'VERIFIED' as const;
     });
+    // 인증이 끝났으면 신뢰 단계(3단계)에 반영됩니다.
+    if (outcome === 'VERIFIED') await this.trust.recompute(userId);
     return { status: outcome, failReason, checks };
   }
 
@@ -197,6 +201,7 @@ export class TicketsService {
       update: {},
       create: { userId, eventId },
     });
+    await this.trust.recompute(userId); // 참석 예정은 신뢰 단계(2단계)에 반영됩니다.
     return this.myStatus(userId, eventId);
   }
 }

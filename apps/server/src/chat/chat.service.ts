@@ -13,6 +13,7 @@ import {
   type Counterpart,
 } from '@meets/shared';
 import { AppointmentsService } from '../appointments/appointments.service';
+import { isBlockedBetween } from '../blocks/block-queries';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
 import { PolicyService } from '../policy/policy.service';
@@ -50,12 +51,19 @@ export class ChatService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  private async closesAtOf(a: { status: string; date: string; endTime: string; endedAt: Date | null }) {
+  private async closesAtOf(a: { status: string; date: string; endTime: string; endedAt: Date | null; chatExtended: boolean }) {
     const hours = await this.policy.getNumber('CHAT_CLOSE_HOURS_AFTER_END');
     return chatClosesAt(
-      { status: a.status as AppointmentStatus, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt },
+      { status: a.status as AppointmentStatus, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended },
       { closeHoursAfterEnd: hours },
     );
+  }
+
+  /** 차단 관계인 두 사람의 채팅은 닫힙니다. (지난 대화는 읽을 수 있음) */
+  private async closesAtWithBlock(a: Parameters<ChatService['closesAtOf']>[0] & { participants: Array<{ userId: string }> }) {
+    const closes = await this.closesAtOf(a);
+    const [x, y] = a.participants.map((p) => p.userId);
+    return (await isBlockedBetween(this.prisma, x, y)) ? this.clock.now() : closes;
   }
 
   private async room(userId: string, appointmentId: string) {
@@ -63,7 +71,7 @@ export class ChatService {
     await this.appointments.settle({ id: appointmentId, participants: { some: { userId } } });
     const a = await this.prisma.appointment.findFirst({ where: { id: appointmentId, participants: { some: { userId } } }, include: roomInclude });
     if (!a) throw new AppError('NOT_FOUND', '채팅을 찾을 수 없어요.');
-    const closesAt = await this.closesAtOf(a);
+    const closesAt = await this.closesAtWithBlock(a);
     return { a, closesAt, open: isChatOpen(closesAt, this.clock.now()) };
   }
 
@@ -164,7 +172,7 @@ export class ChatService {
           counterpart: counterpart(other.user),
           event: a.event,
           date: a.date,
-          open: isChatOpen(await this.closesAtOf(a), now),
+          open: isChatOpen(await this.closesAtWithBlock(a), now),
           unread: unread.get(a.id) ?? 0,
           lastMessage: last ? { body: last.body, createdAt: last.createdAt.toISOString(), mine: last.senderId === userId } : null,
           sortKey: last?.seq ?? 0,

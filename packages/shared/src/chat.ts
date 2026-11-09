@@ -18,9 +18,11 @@ const HOUR = 60 * 60 * 1000;
  * @param endedAt 약속이 끝난(취소·중간 종료·자동 종료된) 시각
  */
 export function chatClosesAt(
-  a: { status: AppointmentStatus; endsAt: Date; endedAt: Date | null },
+  a: { status: AppointmentStatus; endsAt: Date; endedAt: Date | null; extended?: boolean },
   policy: { closeHoursAfterEnd: number },
 ): Date | null {
+  // 서로 '또 같이 가고 싶어요'를 골랐으면 만남이 끝난 뒤에도 닫히지 않습니다. (2026-11-09 사용자 확인)
+  if (a.extended && a.status === 'ENDED') return null;
   const after = (d: Date) => new Date(d.getTime() + policy.closeHoursAfterEnd * HOUR);
   switch (a.status) {
     case 'ENDED':
@@ -106,3 +108,6 @@ export function checkChatBody(body: string, maxLength: number): 'EMPTY' | 'TOO_L
   if ([...trimmed].length > maxLength) return 'TOO_LONG';
   return null;
 }
+
+/** 서로 '또 같이 가고 싶어요'를 골랐을 때 대화창에 남기는 안내 줄 */
+export const CHAT_EXTENDED_LINE = '서로 또 같이 가고 싶어 해서 채팅이 계속 열려 있어요.';

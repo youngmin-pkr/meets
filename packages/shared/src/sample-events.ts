@@ -144,6 +144,8 @@ export interface SamplePerson {
   /** 샘플 팬덤 이름 중 고른 것 */
   fandoms: string[];
   fandomPublic: boolean;
+  /** 쌓인 신뢰(4단계)를 가진 예시 사용자 (데모에서 후보 카드의 '쌓인 신뢰' 표시를 보여 주려고) */
+  trusted?: boolean;
   /** ticket: 티켓 인증(VERIFIED, 고른 날 모두 입장 가능) / 참석 예정(PLANNED, 티켓이 필요 없는 행사만) */
   plans: Array<{ event: number; days: number[]; arrive: string; leave: string; together: number[]; ticket?: 'VERIFIED' | 'PLANNED' }>;
 }
@@ -152,7 +154,7 @@ export const SAMPLE_PEOPLE: SamplePerson[] = [
   {
     key: 'sky', nickname: '하늘', avatarColor: 'ink', gender: 'F', age: 26,
     tempoAnswers: [2, 1, 2], immersionAnswers: [2, 2, 2], mustGender: 'ANY', mustAge: 'ANY',
-    promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드'], fandomPublic: true,
+    promises: ['PUNCTUAL', 'PHOTO_CONSENT', 'IN_APP_CONTACT_ONLY'], fandoms: ['테스트 밴드'], fandomPublic: true, trusted: true,
     plans: [
       { event: 0, days: [0], arrive: '15:00', leave: '21:00', together: [0, 1, 2], ticket: 'VERIFIED' },
       { event: 3, days: [0, 2], arrive: '12:00', leave: '22:00', together: [0, 1] },

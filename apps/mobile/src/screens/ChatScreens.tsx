@@ -237,17 +237,59 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
   );
 }
 
-/** 채팅 규칙 (신고·차단 버튼은 7단계에서 함께 넣습니다) */
-export function ChatRulesScreen(props: { onBack: () => void }) {
+/** 채팅 규칙 · 이 대화 신고하기 · 상대 차단하고 약속 취소 */
+export function ChatRulesScreen(props: {
+  appointmentId: string;
+  onBack: () => void;
+  onReport: (a: AppointmentView) => void;
+  /** 차단하고 나면 채팅이 닫히므로 목록으로 돌아갑니다 */
+  onBlocked: () => void;
+}) {
+  const [appointment, setAppointment] = useState<AppointmentView | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getAppointment(props.appointmentId).then(setAppointment, (e: Error) => setError(e.message));
+  }, [props.appointmentId]);
+
+  async function block() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.blockCounterpart(props.appointmentId);
+      props.onBlocked();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '다시 시도해 주세요.');
+      setBusy(false);
+    }
+  }
+
+  const nick = appointment ? `${appointment.counterpart.nickname}님` : '상대';
   const rules = [
     ['수락한 뒤에만 열려요', '제안을 수락하기 전에는 대화할 수 없어요.'],
     ['번호·SNS는 보내기 전에 멈춰요', '그래도 보내면 기록이 남고, 반복되면 이용이 제한될 수 있어요.'],
     ['사진과 위치는 보낼 수 없어요', '만날 장소는 약속 카드에 적힌 공개된 곳으로만 정해요.'],
-    [`만남이 끝나고 ${POLICY_DEFAULTS.CHAT_CLOSE_HOURS_AFTER_END}시간 뒤 닫혀요`, '약속이 취소되면 바로 닫혀요. 닫힌 뒤에도 지난 대화는 읽을 수 있어요.'],
+    [`만남이 끝나고 ${POLICY_DEFAULTS.CHAT_CLOSE_HOURS_AFTER_END}시간 뒤 닫혀요`, "약속이 취소되면 바로 닫혀요. 서로 '또 같이 가고 싶어요'를 누르면 계속 이어갈 수 있어요."],
   ];
   return (
-    <Page footer={<PrimaryButton label="대화로 돌아가기" onPress={props.onBack} />}>
-      <TopBar label="채팅 규칙" onBack={props.onBack} />
+    <Page
+      footer={
+        confirming ? (
+          <>
+            <Text style={[{ textAlign: 'center', fontSize: 13, lineHeight: 20, color: colors.ink }, keepWords]}>
+              {`${nick}을 차단하면 약속이 취소되고 서로 보이지 않아요. ${nick}에게는 차단했다는 알림이 가지 않아요.`}
+            </Text>
+            <PrimaryButton dark label="네, 차단하고 약속을 취소할게요" loading={busy} onPress={block} />
+            <TextButton label="아니요" onPress={() => setConfirming(false)} />
+          </>
+        ) : (
+          <PrimaryButton label="대화로 돌아가기" onPress={props.onBack} />
+        )
+      }
+    >
+      <TopBar label="채팅 규칙과 신고" onBack={props.onBack} />
       <Title>{'안전한 대화를 위한\n채팅 규칙'}</Title>
       <View style={{ borderRadius: 16, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.white }}>
         {rules.map(([title, text], i) => (
@@ -262,7 +304,28 @@ export function ChatRulesScreen(props: { onBack: () => void }) {
           </View>
         ))}
       </View>
+      {appointment ? (
+        <View style={{ gap: 8 }}>
+          <Pressable
+            onPress={() => props.onReport(appointment)}
+            accessibilityRole="button"
+            style={{ minHeight: 52, alignItems: 'center', justifyContent: 'center', borderRadius: 14, backgroundColor: colors.warnBg }}
+          >
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>이 대화 신고하기</Text>
+          </Pressable>
+          {!confirming ? (
+            <Pressable
+              onPress={() => setConfirming(true)}
+              accessibilityRole="button"
+              style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 2, borderColor: colors.ink }}
+            >
+              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink }}>상대 차단하고 약속 취소</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
       <Text style={[{ textAlign: 'center', fontSize: 13, fontWeight: '700', color: colors.primary }, keepWords]}>위험하다고 느끼면 먼저 112에 연락하세요.</Text>
+      <ErrorText message={error} />
     </Page>
   );
 }

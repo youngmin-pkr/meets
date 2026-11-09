@@ -1,5 +1,9 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
+  BlockView,
+  ReportInput,
+  ReviewInput,
+  TrustView,
   ChatMessageView,
   ChatSummary,
   ChatView,
@@ -100,6 +104,16 @@ export interface Backend {
   getChat(appointmentId: string, after?: number): Promise<ChatView>;
   /** 연락처가 감지되면 CONTACT_DETECTED. confirmContact=true면 '그래도 보낼게요' */
   sendChat(appointmentId: string, body: string, confirmContact?: boolean): Promise<ChatMessageView>;
+  /** 후기 (내용은 상대에게 보이지 않음). mutual=true면 서로 '또 같이 가고 싶어요'를 고른 것 */
+  submitReview(appointmentId: string, input: ReviewInput): Promise<{ done: true; mutual: boolean }>;
+  /** 차단 (상대에게 알리지 않음). 진행 중인 약속은 끝납니다 */
+  blockUser(userId: string): Promise<{ blocked: true }>;
+  /** 채팅 규칙 화면: 약속 상대를 차단하고 약속을 끝냄 */
+  blockCounterpart(appointmentId: string): Promise<{ blocked: true }>;
+  unblockUser(userId: string): Promise<{ blocked: false }>;
+  listBlocks(): Promise<BlockView[]>;
+  sendReport(input: ReportInput): Promise<{ id: string; received: true; blocked: boolean }>;
+  getTrust(): Promise<TrustView>;
 }
 
 /** 홈 화면 요약 */
