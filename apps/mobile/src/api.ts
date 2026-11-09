@@ -7,6 +7,8 @@
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
 import type {
+  BlockView,
+  TrustView,
   ChatMessageView,
   ChatSummary,
   ChatView,
@@ -120,6 +122,13 @@ function createHttpBackend(baseUrl: string): Backend {
     listNotifications: () => call<{ items: NotificationView[]; unread: number }>('GET', '/me/notifications'),
     markNotificationsRead: () => call<{ unread: number }>('POST', '/me/notifications/read'),
     getHomeSummary: () => call<HomeSummary>('GET', '/me/home'),
+    submitReview: (id, input) => call<{ done: true; mutual: boolean }>('POST', `/appointments/${encodeURIComponent(id)}/review`, input),
+    blockUser: (userId) => call<{ blocked: true }>('POST', '/blocks', { userId }),
+    blockCounterpart: (appointmentId) => call<{ blocked: true }>('POST', '/blocks/from-chat', { appointmentId }),
+    unblockUser: (userId) => call<{ blocked: false }>('DELETE', `/blocks/${encodeURIComponent(userId)}`),
+    listBlocks: () => call<BlockView[]>('GET', '/me/blocks'),
+    sendReport: (input) => call<{ id: string; received: true; blocked: boolean }>('POST', '/reports', input),
+    getTrust: () => call<TrustView>('GET', '/me/trust'),
     listChats: () => call<ChatSummary[]>('GET', '/me/chats'),
     getChat: (id, after) => call<ChatView>('GET', `/appointments/${encodeURIComponent(id)}/chat${after !== undefined ? `?after=${after}` : ''}`),
     sendChat: (id, body, confirmContact) =>

@@ -29,6 +29,7 @@ import {
 } from '@meets/shared';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
+import { blockedWith } from '../blocks/block-queries';
 import { PolicyService } from '../policy/policy.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { PreferenceDto } from './matching.dto';
@@ -173,7 +174,6 @@ export class MatchingService {
         },
       },
     });
-    // TODO(7단계): 서로 차단한 사람은 후보에서 숨깁니다.
     const users = new Map<string, { nickname: string; avatarInitial: string; avatarColor: string; fandomPublic: boolean; fandoms: string[] }>();
     const profiles = prefs.map((p) => {
       const birth = p.user.identity?.birthDate ? parseCalendarDate(p.user.identity.birthDate) : null;
@@ -195,6 +195,8 @@ export class MatchingService {
         grade: p.user.ticketVerifications.length ? 'VERIFIED' : p.user.attendancePlans.length ? 'PLANNED' : null,
         // 티켓으로 입장할 수 있는 날만 후보로 봅니다. (정리문서 3장)
         admissibleDayIds: p.user.ticketVerifications[0]?.admissibleDayIds ?? null,
+        // 쌓인 신뢰(4단계)는 카드에 표시만 합니다.
+        trusted: p.user.trustLevel >= 4,
         days: p.days.map((d) => ({
           eventDayId: d.eventDayId,
           arriveTime: d.arriveTime,
@@ -206,11 +208,26 @@ export class MatchingService {
     return { profiles, users };
   }
 
+  /** 서로 '또 같이 가고 싶어요'를 골라 채팅이 이어진 사람들 (차단한 사람은 뺌) */
+  private async reunionWith(userId: string, blocked: Set<string>): Promise<string[]> {
+    const rows = await this.prisma.appointment.findMany({
+      where: { chatExtended: true, participants: { some: { userId } } },
+      select: { participants: { select: { userId: true } } },
+    });
+    return [...new Set(rows.flatMap((r) => r.participants.map((p) => p.userId)).filter((id) => id !== userId && !blocked.has(id)))];
+  }
+
   private async context(userId: string, eventId: string) {
     const { days } = await this.visibleEvent(eventId);
-    const { profiles, users } = await this.profiles(eventId);
-    const viewer = profiles.find((p) => p.userId === userId);
-    if (!viewer) throw new AppError('PREFERENCE_REQUIRED', '먼저 일정과 스타일을 알려 주세요.');
+    const all = await this.profiles(eventId);
+    const me = all.profiles.find((p) => p.userId === userId);
+    if (!me) throw new AppError('PREFERENCE_REQUIRED', '먼저 일정과 스타일을 알려 주세요.');
+    // 서로 차단한 사람은 후보에서 숨깁니다. (정리문서 4장 Block)
+    const blocked = await blockedWith(this.prisma, userId);
+    const profiles = all.profiles.filter((p) => !blocked.has(p.userId));
+    // 서로 '또 같이 가고 싶어요'를 고른 사람은 후보 목록 맨 위에 보입니다.
+    const viewer = { ...me, reunionWith: await this.reunionWith(userId, blocked) };
+    const users = all.users;
     const today = isoOf(this.today());
     // 지난 날짜는 매칭하지 않습니다.
     const upcoming = days.filter((d) => d.date >= today);
@@ -231,6 +248,8 @@ export class MatchingService {
       overlaps: c.overlaps,
       bestOverlapMinutes: c.bestOverlapMinutes,
       shortStart: c.shortStart,
+      trusted: c.trusted,
+      reunion: c.reunion,
       summary: describeCandidate(c),
     };
   }

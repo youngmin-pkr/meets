@@ -20,7 +20,9 @@ export type NotificationKind =
   | 'APPOINTMENT_ENDED_EARLY'
   | 'EVENT_SCHEDULE_CHANGED'
   | 'APPOINTMENT_ON_HOLD'
-  | 'EVENT_CANCELLED';
+  | 'EVENT_CANCELLED'
+  | 'REVIEW_REQUEST'
+  | 'REVIEW_MUTUAL_AGAIN';
 
 export interface NotificationParams {
   nickname?: string;
@@ -88,6 +90,10 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return { title: '약속이 보류됐어요', body: `기한 안에 정하지 못해 ${ev} 약속이 보류됐어요. 취소가 아니고 신뢰 단계에 영향이 없어요.` };
     case 'EVENT_CANCELLED':
       return { title: '행사가 취소됐어요', body: `${ev} 행사가 취소되어 약속이 자동으로 끝났어요. 신뢰 단계에 영향이 없어요.` };
+    case 'REVIEW_REQUEST':
+      return { title: '만남은 어땠어요?', body: `${nick}과 함께한 ${ev} 만남이 끝났어요. ${p.deadline}까지 후기를 남겨 주세요. 내가 남긴 후기는 상대에게 보이지 않아요.` };
+    case 'REVIEW_MUTUAL_AGAIN':
+      return { title: '서로 또 같이 가고 싶어 해요', body: `${nick}과 서로 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드리고, 채팅도 계속 열려 있어요.` };
   }
 }
 

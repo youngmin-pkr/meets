@@ -42,7 +42,13 @@ export type AppErrorCode =
   | 'APPOINTMENT_OVERLAP'
   | 'CHAT_CLOSED'
   | 'CHAT_INVALID'
-  | 'CONTACT_DETECTED';
+  | 'CONTACT_DETECTED'
+  | 'REVIEW_NOT_ALLOWED'
+  | 'REVIEW_INVALID'
+  | 'REVIEW_EXISTS'
+  | 'BLOCK_INVALID'
+  | 'REPORT_INVALID'
+  | 'REPORT_EXISTS';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -85,6 +91,12 @@ const STATUS: Record<AppErrorCode, number> = {
   CHAT_CLOSED: 409,
   CHAT_INVALID: 400,
   CONTACT_DETECTED: 409,
+  REVIEW_NOT_ALLOWED: 409,
+  REVIEW_INVALID: 400,
+  REVIEW_EXISTS: 409,
+  BLOCK_INVALID: 400,
+  REPORT_INVALID: 400,
+  REPORT_EXISTS: 409,
 };
 
 export class AppError extends Error {

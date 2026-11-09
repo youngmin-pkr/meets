@@ -62,6 +62,13 @@ model User {
   appointmentParticipations AppointmentParticipant[]
   notifications       Notification[]
   chatMessages        ChatMessage[]
+  reviewsWritten      Review[]   @relation("ReviewAuthor")
+  reviewsReceived     Review[]   @relation("ReviewTarget")
+  blocksMade          Block[]    @relation("Blocker")
+  blocksReceived      Block[]    @relation("Blocked")
+  reportsMade         Report[]   @relation("ReportReporter")
+  reportsReceived     Report[]   @relation("ReportTarget")
+  trustChanges        TrustChange[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -548,6 +555,10 @@ model Appointment {
   notifications Notification[]
   chatMessages  ChatMessage[]
   chatReads     ChatRead[]
+  reviews       Review[]
+  reports       Report[]
+  /// 서로 '또 같이 가고 싶어요'를 골라 만남이 끝나도 채팅이 닫히지 않음
+  chatExtended  Boolean       @default(false)
 
   @@index([eventId, status])
 }
@@ -568,6 +579,8 @@ model AppointmentParticipant {
   noResponse           Boolean                @default(false)
   /// 이 사람이 '안 나왔어요'를 누른 시각
   noShowReportedAt     DateTime?
+  /// 운영팀이 이 사람의 노쇼를 사실로 확인함 (7-2단계에서 정함. 신뢰 단계 하락에 셈)
+  noShowConfirmed      Boolean                @default(false)
   /// 같은 알림을 두 번 보내지 않기 위한 기록
   dayBeforeNotifiedAt  DateTime?
   reminderNotifiedAt   DateTime?
@@ -594,6 +607,8 @@ enum NotificationKind {
   EVENT_SCHEDULE_CHANGED
   APPOINTMENT_ON_HOLD
   EVENT_CANCELLED
+  REVIEW_REQUEST
+  REVIEW_MUTUAL_AGAIN
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -652,4 +667,113 @@ model ChatRead {
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
 
   @@id([appointmentId, userId])
+}
+
+enum ReviewOverall {
+  GREAT
+  OK
+  POOR
+  UNCOMFORTABLE
+}
+
+enum ReviewAgain {
+  YES
+  MAYBE
+  NO
+}
+
+/// 만남 후기 (정리문서 4장 Review). 점수 없이 상황 칩만. 내용은 상대에게 어떤 길로도 보여 주지 않습니다.
+model Review {
+  id            String        @id @default(uuid())
+  appointmentId String
+  authorId      String
+  targetId      String
+  overall       ReviewOverall
+  goodTags      String[]
+  badTags       String[]
+  again         ReviewAgain
+  createdAt     DateTime      @default(now())
+  appointment   Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  author        User          @relation("ReviewAuthor", fields: [authorId], references: [id])
+  target        User          @relation("ReviewTarget", fields: [targetId], references: [id])
+
+  @@unique([appointmentId, authorId])
+  @@index([targetId, overall])
+}
+
+/// 차단 (정리문서 4장 Block). 서로 후보에서 숨기고, 상대에게 알리지 않습니다.
+model Block {
+  blockerId String
+  blockedId String
+  /// CHAT | REPORT | REVIEW | ME (어디에서 차단했는지)
+  source    String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("Blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("Blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+  @@index([blockedId])
+}
+
+enum ReportCategory {
+  UNWANTED_TOUCH
+  STALKING
+  THREATENING
+  PHOTO_WITHOUT_CONSENT
+  OTHER_PURPOSE
+  MONEY
+  OTHER
+}
+
+/// 도움 요청 > 청소년 신고 > 일반 신고 (정리문서 5장)
+enum ReportPriority {
+  HELP
+  TEEN
+  GENERAL
+}
+
+/// 신고 상태 (정리문서 5장 "신고"). 접수 → 대기 → 처리 중 → (정지 제안 → 확정) → 종결
+enum ReportStatus {
+  RECEIVED
+  QUEUED
+  IN_REVIEW
+  SUSPENSION_PROPOSED
+  CONFIRMED
+  CLOSED
+}
+
+/// 신고 (정리문서 4장 Report). 신고한 사람의 정보는 상대에게 공개되지 않습니다.
+model Report {
+  id            String         @id @default(uuid())
+  reporterId    String
+  targetId      String
+  appointmentId String
+  category      ReportCategory
+  detail        String?
+  priority      ReportPriority
+  status        ReportStatus
+  /// 운영팀이 사실로 확인했는지 (7-2단계에서 정함. 신뢰 4단계 조건에 씀)
+  upheld        Boolean?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  reporter      User           @relation("ReportReporter", fields: [reporterId], references: [id])
+  target        User           @relation("ReportTarget", fields: [targetId], references: [id])
+  appointment   Appointment    @relation(fields: [appointmentId], references: [id])
+
+  @@index([status, priority, createdAt])
+  @@index([targetId, upheld])
+}
+
+/// 신뢰 단계가 바뀐 기록 (정리문서 4장 TrustLevel). 숫자 점수는 저장하지 않습니다.
+model TrustChange {
+  id        String   @id @default(uuid())
+  userId    String
+  fromLevel Int
+  toLevel   Int
+  /// DEFAULT | ATTENDANCE_PLANNED | ATTENDANCE_VERIFIED | REVIEWS | RECENT_RECORDS | REPORT_UPHELD
+  reason    String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }

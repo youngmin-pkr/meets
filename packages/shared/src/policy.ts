@@ -82,6 +82,16 @@ export const POLICY_DEFAULTS = {
    * TODO(법률 검토): 신고·제재 기록 보관(180일)과 같게 임시로 두었습니다. 실제 삭제는 7단계 신고 기능과 함께 만듭니다.
    */
   CHAT_RETENTION_DAYS: 180,
+  /** 후기를 남길 수 있는 기간: 만남이 끝나고 며칠 (2026-11-09 사용자 확인) */
+  REVIEW_WINDOW_DAYS: 7,
+  /** 신뢰 4단계: 받은 '좋았어요·괜찮았어요' 후기가 이 수 이상 (정리문서 정책 값 11) */
+  TRUST_UP_REVIEW_COUNT: 3,
+  /** 신뢰 단계 하락: 최근 며칠 동안의 임박 취소·무응답·확인된 노쇼를 보는지 (정책 값 12) */
+  TRUST_DOWN_WINDOW_DAYS: 90,
+  /** 신뢰 단계 하락: 최근 기간에 이만큼 이상이면 한 단계 내려감 (정책 값 12) */
+  TRUST_DOWN_COUNT: 2,
+  /** 신고 '자세한 내용' 최대 글자 수 */
+  REPORT_DETAIL_MAX_LENGTH: 1000,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

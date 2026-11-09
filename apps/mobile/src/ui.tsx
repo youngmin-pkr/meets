@@ -15,14 +15,15 @@ export function Page({ children, footer, tabBar }: { children: ReactNode; footer
   );
 }
 
-export type Tab = 'HOME' | 'EVENTS' | 'CHATS';
+export type Tab = 'HOME' | 'EVENTS' | 'CHATS' | 'ME';
 
-/** 아래쪽 메뉴 (홈·행사·채팅). '나' 화면은 만들 때 추가합니다. */
+/** 아래쪽 메뉴 (홈·행사·채팅·나) */
 export function TabBar(props: { current: Tab; onChange: (t: Tab) => void; chatUnread?: number }) {
   const tabs: Array<{ key: Tab; label: string }> = [
     { key: 'HOME', label: '홈' },
     { key: 'EVENTS', label: '행사' },
     { key: 'CHATS', label: '채팅' },
+    { key: 'ME', label: '나' },
   ];
   return (
     <View accessibilityRole="tablist" style={{ flexDirection: 'row', height: 64, borderTopWidth: 1.5, borderTopColor: colors.border, backgroundColor: colors.white }}>

@@ -67,6 +67,7 @@ function badges(c: CandidateCard, multiDay: boolean) {
   ];
   if (multiDay) list.push({ label: `${c.overlaps.map((o) => shortDate(o.date).split(' ')[0]).join(' · ')} 겹침`, tone: 'line' });
   if (c.sameFan) list.push({ label: '같은 팬', tone: 'dark' });
+  if (c.trusted) list.push({ label: '쌓인 신뢰', tone: 'dark' });
   return list;
 }
 
@@ -93,6 +94,7 @@ function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCa
         <View style={{ flex: 1, gap: 4, alignItems: 'flex-start' }}>
           <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>{c.nickname}</Text>
           <GradeBadge grade={c.grade} />
+          {c.reunion ? <Badge label="서로 또 같이 가고 싶어 했어요" tone="lime" /> : null}
         </View>
         <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>자세히 ›</Text>
       </View>
@@ -328,6 +330,8 @@ export function CandidateDetailScreen(props: {
         <View style={{ gap: 4, flex: 1, alignItems: 'flex-start' }}>
           <Title>{c.nickname}</Title>
           <GradeBadge grade={c.grade} />
+          {c.reunion ? <Badge label="서로 또 같이 가고 싶어 했어요" tone="lime" /> : null}
+          {c.trusted ? <Badge label="쌓인 신뢰" tone="dark" /> : null}
           {c.sameFan ? <Badge label={detail?.publicFandoms.length ? `같은 팬 · ${detail.publicFandoms.join(', ')}` : '같은 팬'} tone="dark" /> : null}
         </View>
       </View>
