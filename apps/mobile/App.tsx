@@ -79,6 +79,7 @@ export default function App() {
   const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
   const [chatId, setChatId] = useState<string | null>(null);
   const [chatBack, setChatBack] = useState<Screen>('CHATS');
+  const [focusSearch, setFocusSearch] = useState(false);
   const [eventCategory, setEventCategory] = useState<EventCategory | undefined>(undefined);
   const [reported, setReported] = useState<{ input: EventReportInput; result: EventReportResult } | null>(null);
 
@@ -116,6 +117,8 @@ export default function App() {
       setScreen('SCHEDULE');
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : '다시 시도해 주세요.');
+      // 홈에서 눌렀어도 오류는 행사 탭에서 보여 줍니다.
+      setScreen('EVENTS');
     }
   }
 
@@ -140,7 +143,10 @@ export default function App() {
 
   /** 아래쪽 메뉴 */
   function goTab(t: Tab) {
-    if (t === 'EVENTS') setEventCategory(undefined);
+    if (t === 'EVENTS') {
+      setEventCategory(undefined);
+      setFocusSearch(false);
+    }
     setScreen(t);
   }
 
@@ -292,8 +298,15 @@ export default function App() {
             nickname={me?.nickname ?? ''}
             onFindEvents={(category) => {
               setEventCategory(category);
+              setFocusSearch(false);
               setScreen('EVENTS');
             }}
+            onSearch={() => {
+              setEventCategory(undefined);
+              setFocusSearch(true);
+              setScreen('EVENTS');
+            }}
+            onOpenEvent={startFlow}
             onProposals={() => setScreen('PROPOSALS')}
             onAppointment={(a) => openAppointment(a)}
             onNotifications={() => setScreen('NOTIFICATIONS')}
@@ -302,10 +315,12 @@ export default function App() {
         )}
         {screen === 'EVENTS' && (
           <EventListScreen
+            key={`${eventCategory ?? 'all'}-${focusSearch}`}
             initialCategory={eventCategory}
+            focusSearch={focusSearch}
             onNext={startFlow}
             onReport={() => setScreen('EVENT_REPORT')}
-            onBack={() => setScreen('HOME')}
+            onTab={goTab}
             flowError={flowError}
           />
         )}
