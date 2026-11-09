@@ -7,6 +7,9 @@
  * 로그인 토큰은 지금은 앱이 켜져 있는 동안만 기억합니다.
  */
 import type {
+  ChatMessageView,
+  ChatSummary,
+  ChatView,
   AppointmentView,
   NotificationView,
   ProposalView,
@@ -117,6 +120,10 @@ function createHttpBackend(baseUrl: string): Backend {
     listNotifications: () => call<{ items: NotificationView[]; unread: number }>('GET', '/me/notifications'),
     markNotificationsRead: () => call<{ unread: number }>('POST', '/me/notifications/read'),
     getHomeSummary: () => call<HomeSummary>('GET', '/me/home'),
+    listChats: () => call<ChatSummary[]>('GET', '/me/chats'),
+    getChat: (id, after) => call<ChatView>('GET', `/appointments/${encodeURIComponent(id)}/chat${after !== undefined ? `?after=${after}` : ''}`),
+    sendChat: (id, body, confirmContact) =>
+      call<ChatMessageView>('POST', `/appointments/${encodeURIComponent(id)}/chat`, confirmContact ? { body, confirmContact } : { body }),
   };
 }
 

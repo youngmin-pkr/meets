@@ -73,6 +73,15 @@ export const POLICY_DEFAULTS = {
   NOTIFY_QUIET_START_HOUR: 22,
   /** 방해 금지 끝 시각(아침 몇 시, 한국 시간) */
   NOTIFY_QUIET_END_HOUR: 8,
+  /** 채팅 닫힘: 만남이 끝나고 몇 시간 뒤 (정리문서 정책 값 8) */
+  CHAT_CLOSE_HOURS_AFTER_END: 24,
+  /** 채팅 메시지 한 번에 보낼 수 있는 글자 수 (2026-11-09 사용자 확인) */
+  CHAT_MESSAGE_MAX_LENGTH: 500,
+  /**
+   * 대화 기록 보관 기간(일). 신고 처리에 쓰려고 보관합니다.
+   * TODO(법률 검토): 신고·제재 기록 보관(180일)과 같게 임시로 두었습니다. 실제 삭제는 7단계 신고 기능과 함께 만듭니다.
+   */
+  CHAT_RETENTION_DAYS: 180,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

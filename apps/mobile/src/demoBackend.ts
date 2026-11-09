@@ -6,6 +6,17 @@
  * 실제 서비스의 보안(권한 검사, DB 제약)은 apps/server에 있고, 여기는 화면 시연용입니다.
  */
 import {
+  arrivedLine,
+  CHAT_STATUS_LINES,
+  chatClosesAt,
+  checkChatBody,
+  CLOSED_APPOINTMENT_STATUSES,
+  detectContact,
+  isChatOpen,
+  seoulDateTime,
+  type ChatMessageView,
+  type ChatSummary,
+  type ChatView,
   ACTIVE_APPOINTMENT_STATUSES,
   appointmentActions,
   appointmentWindow,
@@ -209,7 +220,30 @@ interface DemoAppointment {
   createdAt: number;
   /** 데모 전용: 예시 상대가 '갈 수 있어요'를 누르는 시각 */
   sampleConfirmAt: number | null;
+  /** 취소·중간 종료·자동 종료·종료된 시각 (채팅 닫힘 계산) */
+  endedAt: Date | null;
+  /** 앱 안 채팅 */
+  messages: DemoMessage[];
+  /** 사람별로 어디까지 읽었는지 */
+  readSeq: Record<string, number>;
+  /** 데모 전용: 예시 상대가 답장하는 시각과 다음 답장 순서 */
+  sampleReplyAt: number | null;
+  sampleReplies: number;
 }
+
+interface DemoMessage {
+  id: string;
+  seq: number;
+  senderId: string | null;
+  kind: 'TEXT' | 'SYSTEM';
+  body: string;
+  contactDetected: boolean;
+  createdAt: Date;
+}
+
+/** 데모 전용: 예시 상대의 인사와 답장 (실제 서비스에는 없음) */
+const SAMPLE_GREETING = '안녕하세요! 수락해 주셔서 고마워요. 당일에 만날 장소에서 봬요.';
+const SAMPLE_REPLIES = ['좋아요! 그때 봬요.', '네, 알겠어요. 도착하면 앱에서 알려 드릴게요.', '천천히 오셔도 괜찮아요.'];
 
 /** 약속을 만들 때 저장해 두는 정책 값 (데모는 기본값) */
 const DEMO_APPOINTMENT_POLICY: AppointmentPolicy = {
@@ -344,6 +378,12 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     }
     for (const a of appointments) {
       for (const step of dueAppointmentSteps(factsOf(a), now())) applyStep(a, step);
+      // 데모 전용: 내가 메시지를 보내면 예시 상대가 몇 초 뒤 정해진 답장을 보냅니다.
+      const sampleUser = a.users.find(isSample);
+      if (sampleUser && a.sampleReplyAt !== null && a.sampleReplyAt <= t && isChatOpen(chatClosesAtOf(a), now())) {
+        a.sampleReplyAt = null;
+        if (a.sampleReplies < SAMPLE_REPLIES.length) addMessage(a, sampleUser, 'TEXT', SAMPLE_REPLIES[a.sampleReplies++]);
+      }
       // 데모 전용: 예시 상대는 확인 요청이 열리면 몇 초 뒤 '갈 수 있어요'를 누릅니다.
       for (const u of a.users.filter(isSample)) {
         if (!appointmentActions(factsOf(a), u, now(), { newScheduleAvailable: false }).confirm) continue;
@@ -405,7 +445,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       case 'NOTIFY_SOON':
         return once(step.userIds, 'soonNotifiedAt', 'APPOINTMENT_SOON');
       case 'CANCEL_NO_CONFIRM':
-        a.status = 'CANCELLED';
+        setStatus(a, 'CANCELLED');
         a.endReason = 'NO_CONFIRM';
         for (const u of a.users) {
           const silent = step.noResponseUserIds.includes(u);
@@ -414,13 +454,13 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         }
         return;
       case 'START':
-        a.status = 'IN_PROGRESS';
+        setStatus(a, 'IN_PROGRESS');
         return;
       case 'END':
-        a.status = 'ENDED';
+        setStatus(a, 'ENDED');
         return;
       case 'HOLD':
-        a.status = 'ON_HOLD';
+        setStatus(a, 'ON_HOLD');
         for (const u of a.users) notify(u, 'APPOINTMENT_ON_HOLD', base, target);
         return;
     }
@@ -429,7 +469,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   function confirmInternal(a: DemoAppointment, userId: string) {
     a.parts[userId].confirmedAt = now();
     if (a.users.every((u) => a.parts[u].confirmedAt)) {
-      a.status = 'CONFIRMED';
+      setStatus(a, 'CONFIRMED');
       const other = a.users.find((u) => u !== userId)!;
       notify(other, 'APPOINTMENT_CONFIRMED', { nickname: nicknameOf(userId), when: formatSeoulShort(factsTimes(factsOf(a)).startsAt), spotName: a.meetingSpotName }, { appointmentId: a.id });
     }
@@ -471,10 +511,58 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       parts: { [p.senderId]: emptyPart(), [p.receiverId]: emptyPart() },
       createdAt: now().getTime(),
       sampleConfirmAt: null,
+      endedAt: null,
+      messages: [],
+      readSeq: {},
+      sampleReplyAt: null,
+      sampleReplies: 0,
     };
     appointments.push(a);
+    addMessage(a, null, 'SYSTEM', CHAT_STATUS_LINES.PENDING_CONFIRM!);
+    // 데모 전용: 예시 상대가 먼저 인사합니다.
+    const sample = a.users.find(isSample);
+    if (sample) addMessage(a, sample, 'TEXT', SAMPLE_GREETING);
     notify(p.senderId, 'PROPOSAL_ACCEPTED', { nickname: nicknameOf(p.receiverId), eventName: eventName(p.eventId) }, { appointmentId: a.id });
     return a;
+  }
+
+  let messageSeq = 0;
+  function addMessage(a: DemoAppointment, senderId: string | null, kind: 'TEXT' | 'SYSTEM', body: string, contactDetected = false) {
+    const m: DemoMessage = { id: `demo-message-${++messageSeq}`, seq: messageSeq, senderId, kind, body, contactDetected, createdAt: now() };
+    a.messages.push(m);
+    return m;
+  }
+
+  /** 약속 상태 바꾸기: 채팅에 안내 줄을 남기고, 끝난 약속은 끝난 시각을 기록 (서버의 AppointmentStateService와 같음) */
+  function setStatus(a: DemoAppointment, to: AppointmentStatus) {
+    a.status = to;
+    if (CLOSED_APPOINTMENT_STATUSES.includes(to)) a.endedAt = now();
+    const line = CHAT_STATUS_LINES[to];
+    if (line) addMessage(a, null, 'SYSTEM', line);
+  }
+
+  function chatClosesAtOf(a: DemoAppointment) {
+    return chatClosesAt(
+      { status: a.status, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt },
+      { closeHoursAfterEnd: POLICY_DEFAULTS.CHAT_CLOSE_HOURS_AFTER_END },
+    );
+  }
+
+  function unreadOf(a: DemoAppointment, me: string) {
+    const read = a.readSeq[me] ?? 0;
+    return a.messages.filter((m) => m.kind === 'TEXT' && m.senderId !== me && m.seq > read).length;
+  }
+
+  function messageView(m: DemoMessage, me: string): ChatMessageView {
+    return {
+      id: m.id,
+      seq: m.seq,
+      kind: m.kind,
+      mine: m.senderId === me,
+      body: m.body,
+      createdAt: m.createdAt.toISOString(),
+      flagged: m.senderId === me && m.contactDetected,
+    };
   }
 
   function dayAndSpot(eventId: string, dayId: string, spotId: string) {
@@ -535,6 +623,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         : null,
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
+      unreadMessages: unreadOf(a, me),
     };
   }
 
@@ -1181,7 +1270,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!appointmentActions(factsOf(a), user.id, now(), { newScheduleAvailable: false }).cancel) {
         throw new ApiError('APPOINTMENT_STATE', '지금은 취소할 수 없는 약속이에요.');
       }
-      a.status = 'CANCELLED';
+      setStatus(a, 'CANCELLED');
       a.endReason = 'CANCELLED';
       a.cancelledBy = user.id;
       a.cancelReason = reason ?? null;
@@ -1197,6 +1286,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         throw new ApiError('APPOINTMENT_NOT_NOW', '약속 시간이 가까워지면 누를 수 있어요.');
       }
       a.parts[user.id].arrivedAt = now();
+      addMessage(a, null, 'SYSTEM', arrivedLine(nicknameOf(user.id)));
       notify(a.users.find((u) => u !== user.id)!, 'PARTNER_ARRIVED', { nickname: nicknameOf(user.id), spotName: a.meetingSpotName }, { appointmentId: a.id });
       return delay(appointmentView(a, user.id));
     },
@@ -1206,7 +1296,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!appointmentActions(factsOf(a), user.id, now(), { newScheduleAvailable: false }).reportNoShow) {
         throw new ApiError('APPOINTMENT_NOT_NOW', "지금은 '안 나왔어요'를 누를 수 없어요.");
       }
-      a.status = 'ENDED_EARLY';
+      setStatus(a, 'ENDED_EARLY');
       a.endReason = 'NO_SHOW';
       a.parts[user.id].noShowReportedAt = now();
       notify(a.users.find((u) => u !== user.id)!, 'APPOINTMENT_ENDED_EARLY', { eventName: eventName(a.eventId) }, { appointmentId: a.id });
@@ -1224,6 +1314,63 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       const user = currentUser();
       for (const n of notifications) if (n.userId === user.id) n.read = true;
       return delay({ unread: 0 });
+    },
+
+    async listChats() {
+      const user = currentUser();
+      settle();
+      const list: Array<ChatSummary & { sortKey: number }> = appointments
+        .filter((a) => a.users.includes(user.id))
+        .map((a) => {
+          const last = a.messages[a.messages.length - 1];
+          return {
+            appointmentId: a.id,
+            counterpart: counterpartOf(a.users.find((u) => u !== user.id)!),
+            event: { id: a.eventId, name: eventName(a.eventId) },
+            date: a.date,
+            open: isChatOpen(chatClosesAtOf(a), now()),
+            unread: unreadOf(a, user.id),
+            lastMessage: last ? { body: last.body, createdAt: last.createdAt.toISOString(), mine: last.senderId === user.id } : null,
+            sortKey: last?.seq ?? 0,
+          };
+        });
+      return delay(list.sort((x, y) => Number(y.open) - Number(x.open) || y.sortKey - x.sortKey).map(({ sortKey: _s, ...c }) => c));
+    },
+
+    async getChat(id, after) {
+      const { user, a } = myAppointment(id);
+      const messages = a.messages.filter((m) => after === undefined || m.seq > after);
+      const last = a.messages[a.messages.length - 1];
+      if (last) a.readSeq[user.id] = last.seq;
+      const closesAt = chatClosesAtOf(a);
+      const view: ChatView = {
+        appointmentId: a.id,
+        counterpart: counterpartOf(a.users.find((u) => u !== user.id)!),
+        event: { id: a.eventId, name: eventName(a.eventId) },
+        date: a.date,
+        appointmentStatus: a.status,
+        closesAt: closesAt?.toISOString() ?? null,
+        open: isChatOpen(closesAt, now()),
+        messages: messages.map((m) => messageView(m, user.id)),
+      };
+      return delay(view);
+    },
+
+    async sendChat(id, body, confirmContact) {
+      const { user, a } = myAppointment(id);
+      if (!isChatOpen(chatClosesAtOf(a), now())) throw new ApiError('CHAT_CLOSED', '채팅이 닫혀서 더 보낼 수 없어요.');
+      const max = POLICY_DEFAULTS.CHAT_MESSAGE_MAX_LENGTH;
+      const problem = checkChatBody(body, max);
+      if (problem === 'EMPTY') throw new ApiError('CHAT_INVALID', '보낼 내용을 적어 주세요.');
+      if (problem === 'TOO_LONG') throw new ApiError('CHAT_INVALID', `한 번에 ${max}자까지 보낼 수 있어요.`);
+      const contact = detectContact(body);
+      if (contact.detected && !confirmContact) {
+        throw new ApiError('CONTACT_DETECTED', '번호나 SNS가 들어 있어요. 처음 만나기 전에는 연락처를 주고받지 않는 게 안전해요.', { kinds: contact.kinds });
+      }
+      const m = addMessage(a, user.id, 'TEXT', body.trim(), contact.detected);
+      a.readSeq[user.id] = m.seq;
+      if (a.users.some(isSample) && a.sampleReplyAt === null) a.sampleReplyAt = now().getTime() + autoAcceptDelayMs;
+      return delay(messageView(m, user.id));
     },
 
     async getHomeSummary() {

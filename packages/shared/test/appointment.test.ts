@@ -277,3 +277,37 @@ describe('알림', () => {
     );
   });
 });
+
+import { chatClosesAt, checkChatBody, isChatOpen } from '../src';
+
+describe('채팅이 닫히는 시각', () => {
+  const policy = { closeHoursAfterEnd: 24 };
+  const endsAt = kst('2026-12-13T17:00:00');
+  const endedAt = kst('2026-12-10T09:00:00');
+  test('진행 중인 약속은 열려 있다', () => {
+    for (const status of ['PENDING_CONFIRM', 'CONFIRMED', 'IN_PROGRESS', 'RESCHEDULING'] as const) {
+      expect(chatClosesAt({ status, endsAt, endedAt: null }, policy)).toBeNull();
+    }
+  });
+  test('만남이 끝나면 24시간 뒤, 중간 종료는 끝난 때부터 24시간 뒤', () => {
+    expect(chatClosesAt({ status: 'ENDED', endsAt, endedAt: null }, policy)).toEqual(kst('2026-12-14T17:00:00'));
+    expect(chatClosesAt({ status: 'ENDED_EARLY', endsAt, endedAt: kst('2026-12-13T14:20:00') }, policy)).toEqual(kst('2026-12-14T14:20:00'));
+    expect(chatClosesAt({ status: 'ON_HOLD', endsAt, endedAt: null }, policy)).toEqual(kst('2026-12-14T17:00:00'));
+  });
+  test('취소·행사 취소는 바로 닫힌다', () => {
+    expect(chatClosesAt({ status: 'CANCELLED', endsAt, endedAt }, policy)).toEqual(endedAt);
+    expect(chatClosesAt({ status: 'AUTO_ENDED', endsAt, endedAt }, policy)).toEqual(endedAt);
+  });
+  test('닫히는 시각이 되면 닫힘', () => {
+    const at = kst('2026-12-14T17:00:00');
+    expect(isChatOpen(null, at)).toBe(true);
+    expect(isChatOpen(at, kst('2026-12-14T16:59:00'))).toBe(true);
+    expect(isChatOpen(at, at)).toBe(false);
+  });
+  test('메시지 글 검사: 비었거나 500자를 넘으면 안 됨 (이모지도 한 글자)', () => {
+    expect(checkChatBody('   ', 500)).toBe('EMPTY');
+    expect(checkChatBody('가'.repeat(500), 500)).toBeNull();
+    expect(checkChatBody('가'.repeat(501), 500)).toBe('TOO_LONG');
+    expect(checkChatBody('😀'.repeat(500), 500)).toBeNull();
+  });
+});

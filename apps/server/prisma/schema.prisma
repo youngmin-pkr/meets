@@ -61,6 +61,7 @@ model User {
   receivedProposals   Proposal[] @relation("ProposalReceiver")
   appointmentParticipations AppointmentParticipant[]
   notifications       Notification[]
+  chatMessages        ChatMessage[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -535,6 +536,8 @@ model Appointment {
   cancelReason  String?
   /// 행사 일정이 바뀌었을 때 다시 정하기 기한
   rescheduleDeadline DateTime?
+  /// 취소·중간 종료·자동 종료·종료된 시각 (채팅이 닫히는 시각 계산에 씀)
+  endedAt       DateTime?
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
   proposal      Proposal                 @relation(fields: [proposalId], references: [id])
@@ -543,6 +546,8 @@ model Appointment {
   meetingSpot   MeetingSpot?             @relation(fields: [meetingSpotId], references: [id], onDelete: SetNull)
   participants  AppointmentParticipant[]
   notifications Notification[]
+  chatMessages  ChatMessage[]
+  chatReads     ChatRead[]
 
   @@index([eventId, status])
 }
@@ -610,3 +615,41 @@ model Notification {
   @@index([userId, createdAt])
 }
 
+
+enum ChatMessageKind {
+  TEXT
+  SYSTEM
+}
+
+/// 앱 안 채팅 메시지 (정리문서 4장 ChatRoom, Message)
+/// 채팅방은 약속 하나에 하나라서 따로 표를 두지 않고 약속(appointmentId)으로 묶습니다.
+/// 운영팀은 신고 건에서만, 사유를 남기고 열람합니다 (7단계). 지금은 운영자가 볼 수 있는 길이 없습니다.
+model ChatMessage {
+  id              String          @id @default(uuid())
+  /// 순서 번호 (새 메시지를 가져올 때 씀)
+  seq             Int             @default(autoincrement())
+  appointmentId   String
+  /// 안내 줄이면 비어 있음
+  senderId        String?
+  kind            ChatMessageKind
+  body            String
+  /// '그래도 보낼게요'로 보낸 연락처·SNS (CLAUDE.md 규칙 7). 종류만 따로 기록
+  contactDetected Boolean         @default(false)
+  contactKinds    String[]
+  createdAt       DateTime        @default(now())
+  appointment     Appointment     @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  sender          User?           @relation(fields: [senderId], references: [id])
+
+  @@index([appointmentId, seq])
+  @@index([senderId, contactDetected])
+}
+
+/// 어디까지 읽었는지 (안 읽은 메시지 수 계산)
+model ChatRead {
+  appointmentId String
+  userId        String
+  lastReadSeq   Int
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+
+  @@id([appointmentId, userId])
+}

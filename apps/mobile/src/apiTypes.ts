@@ -1,5 +1,8 @@
 /** 서버(또는 데모 모드)와 주고받는 값의 모양 */
 import type {
+  ChatMessageView,
+  ChatSummary,
+  ChatView,
   AppointmentView,
   CancelReason,
   NotificationView,
@@ -92,6 +95,11 @@ export interface Backend {
   listNotifications(): Promise<{ items: NotificationView[]; unread: number }>;
   markNotificationsRead(): Promise<{ unread: number }>;
   getHomeSummary(): Promise<HomeSummary>;
+  /** 앱 안 채팅. after를 주면 그 번호 다음 메시지만 */
+  listChats(): Promise<ChatSummary[]>;
+  getChat(appointmentId: string, after?: number): Promise<ChatView>;
+  /** 연락처가 감지되면 CONTACT_DETECTED. confirmContact=true면 '그래도 보낼게요' */
+  sendChat(appointmentId: string, body: string, confirmContact?: boolean): Promise<ChatMessageView>;
 }
 
 /** 홈 화면 요약 */

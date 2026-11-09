@@ -23,6 +23,10 @@ export type Screen =
   | 'APPOINTMENT_CANCEL'
   /** 알림함 */
   | 'NOTIFICATIONS'
+  /** 앱 안 채팅 */
+  | 'CHATS'
+  | 'CHAT'
+  | 'CHAT_RULES'
   | 'EVENT_REPORT'
   | 'EVENT_REPORTED'
   /** 입력 흐름 2~5단계 */
