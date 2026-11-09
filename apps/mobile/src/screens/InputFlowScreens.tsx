@@ -32,7 +32,7 @@ import {
 import { colors } from '../theme';
 import { Body, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, StepHeader, styles, TimeStepper, Title } from '../ui';
 
-const TOTAL = 5;
+const TOTAL = 4;
 
 /** 화면 위의 행사 띠 (날짜 + 이름) */
 export function EventStrip({ event, dates }: { event: EventDetail; dates?: string[] }) {
@@ -65,7 +65,7 @@ export function ScheduleScreen(props: {
 
   return (
     <Page footer={<PrimaryButton label="다음" onPress={props.onNext} disabled={!scheduleReady(draft, event)} />}>
-      <StepHeader step={2} total={TOTAL} onBack={props.onBack} />
+      <StepHeader step={1} total={TOTAL} onBack={props.onBack} />
       <Title>{'그날 일정을\n알려주세요'}</Title>
       <Body>같이할 구간만 골라도 돼요. 나머지는 혼자 즐기세요.</Body>
       <EventStrip event={event} dates={days.map((d) => d.date)} />
@@ -182,7 +182,7 @@ export function ScheduleScreen(props: {
 
 /** 템포(3/5)·몰입도(4/5) 질문 화면 */
 export function QuestionsScreen(props: {
-  step: 3 | 4;
+  step: 2 | 3;
   tag: string;
   title: string;
   questions: ChoiceQuestion[];
@@ -216,7 +216,7 @@ export function QuestionsScreen(props: {
 }
 
 export function TempoScreen(p: Omit<Parameters<typeof QuestionsScreen>[0], 'step' | 'tag' | 'title' | 'questions'>) {
-  return <QuestionsScreen {...p} step={3} tag="스타일 ① 템포" title="나는 이렇게 움직여요" questions={TEMPO_QUESTIONS} />;
+  return <QuestionsScreen {...p} step={2} tag="스타일 ① 템포" title="나는 이렇게 움직여요" questions={TEMPO_QUESTIONS} />;
 }
 
 /** 몰입도: 행사 종류(공연 / 전시·팝업·박람회)에 맞는 질문만 보여 줍니다. */
@@ -224,7 +224,7 @@ export function ImmersionScreen({
   category,
   ...p
 }: { category: EventCategory } & Omit<Parameters<typeof QuestionsScreen>[0], 'step' | 'tag' | 'title' | 'questions'>) {
-  return <QuestionsScreen {...p} step={4} tag="스타일 ② 몰입도" title="나는 이렇게 즐겨요" questions={immersionQuestions(category)} />;
+  return <QuestionsScreen {...p} step={3} tag="스타일 ② 몰입도" title="나는 이렇게 즐겨요" questions={immersionQuestions(category)} />;
 }
 
 export function MustScreen(props: {
@@ -238,7 +238,7 @@ export function MustScreen(props: {
   const { draft } = props;
   return (
     <Page footer={<PrimaryButton label="후보 보러 가기" onPress={props.onSubmit} loading={props.saving} />}>
-      <StepHeader step={5} total={TOTAL} onBack={props.onBack} />
+      <StepHeader step={4} total={TOTAL} onBack={props.onBack} />
       <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>필수 조건</Text>
       <Title>{'이것만은\n꼭 지켜주세요'}</Title>
       <Body>여기서 고른 조건이 어긋나는 사람은 후보에 나타나지 않아요.</Body>

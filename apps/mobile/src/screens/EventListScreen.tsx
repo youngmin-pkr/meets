@@ -1,11 +1,11 @@
 /**
- * 행사 선택 (시안: 행사 선택)
- * 포스터·사진 없이 사실 정보(날짜, 유형, 이름, 장소)만 보여 줍니다.
+ * 행사 탭 (아래쪽 메뉴 '행사')
+ * 사진 대신 그림 카드와 사실 정보(날짜, 유형, 이름, 장소)를 보여 줍니다. (정리문서 2장 "행사")
+ * 행사를 누르면 같이 갈 사람 찾기(일정 입력)로 이어집니다.
  */
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import {
-  describeEventDate,
   describeEventDateRange,
   EVENT_CATEGORY_LABELS,
   EVENT_TYPE_LABELS,
@@ -13,22 +13,35 @@ import {
   type EventSummary,
 } from '@meets/shared';
 import { api } from '../api';
+import { EventArt } from '../EventArt';
 import { colors } from '../theme';
-import { Body, ErrorText, keepWords, Page, PrimaryButton, StepHeader, styles, Title } from '../ui';
+import { Body, ErrorText, keepWords, Page, styles, TabBar, Title, type Tab } from '../ui';
+
+const CATEGORIES: Array<{ key: EventCategory | undefined; label: string }> = [
+  { key: undefined, label: '전체' },
+  { key: 'PERFORMANCE', label: EVENT_CATEGORY_LABELS.PERFORMANCE },
+  { key: 'EXHIBITION', label: EVENT_CATEGORY_LABELS.EXHIBITION },
+];
 
 export function EventListScreen(props: {
-  /** 홈의 행사 종류 바로가기로 들어오면 그 종류만 보여 줍니다 */
+  /** 홈에서 종류를 골라 들어오면 그 종류만 보여 줍니다 */
   initialCategory?: EventCategory;
+  /** 홈 검색창에서 들어오면 검색칸에 바로 커서를 둡니다 */
+  focusSearch?: boolean;
   onNext: (event: EventSummary) => void;
   onReport: () => void;
-  onBack: () => void;
+  onTab: (t: Tab) => void;
   flowError?: string | null;
 }) {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<EventCategory | undefined>(props.initialCategory);
   const [events, setEvents] = useState<EventSummary[] | null>(null);
-  const [selected, setSelected] = useState<EventSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [chatUnread, setChatUnread] = useState(0);
+
+  useEffect(() => {
+    api.listChats().then((c) => setChatUnread(c.reduce((n, x) => n + x.unread, 0)), () => undefined);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,63 +61,42 @@ export function EventListScreen(props: {
     };
   }, [query, category]);
 
-  const chips: Array<{ key: EventCategory | undefined; label: string }> = [
-    { key: undefined, label: '전체' },
-    { key: 'PERFORMANCE', label: EVENT_CATEGORY_LABELS.PERFORMANCE },
-    { key: 'EXHIBITION', label: EVENT_CATEGORY_LABELS.EXHIBITION },
-  ];
-
   return (
-    <Page
-      footer={
-        <PrimaryButton label="다음" onPress={() => selected && props.onNext(selected)} disabled={!selected} />
-      }
-    >
-      <StepHeader step={1} total={5} onBack={props.onBack} />
-      <Title>{'어떤 행사에\n함께 가고 싶으세요?'}</Title>
+    <Page tabBar={<TabBar current="EVENTS" onChange={props.onTab} chatUnread={chatUnread} />}>
+      <Title>행사</Title>
       <Body>행사를 고르면, 같은 행사에 가는 사람들만 보여드려요.</Body>
 
       <TextInput
         value={query}
         onChangeText={setQuery}
+        autoFocus={props.focusSearch}
         placeholder="행사·장소 검색"
         accessibilityLabel="행사 또는 장소 검색"
         style={[styles.input, { borderWidth: 1.5, borderColor: colors.border }]}
       />
 
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {chips.map((c) => {
+      {/* 종류 탭 (시안 2의 위쪽 탭 모양) */}
+      <View accessibilityRole="tablist" style={{ flexDirection: 'row', gap: 4, padding: 4, borderRadius: 12, backgroundColor: colors.border }}>
+        {CATEGORIES.map((c) => {
           const on = c.key === category;
           return (
             <Pressable
               key={c.label}
               onPress={() => setCategory(c.key)}
-              accessibilityRole="button"
+              accessibilityRole="tab"
               accessibilityState={{ selected: on }}
-              style={{
-                minHeight: 44,
-                justifyContent: 'center',
-                paddingHorizontal: 14,
-                borderRadius: 22,
-                backgroundColor: on ? colors.ink : colors.white,
-                borderWidth: on ? 0 : 1.5,
-                borderColor: colors.border,
-              }}
+              style={{ flex: c.key ? 1.4 : 0.8, minHeight: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 9, backgroundColor: on ? colors.ink : 'transparent' }}
             >
-              <Text style={{ fontSize: 13, fontWeight: on ? '700' : '500', color: on ? colors.white : colors.ink }}>
-                {c.label}
-              </Text>
+              <Text style={[{ fontSize: 13, fontWeight: on ? '900' : '600', color: on ? colors.white : colors.ink, textAlign: 'center' }, keepWords]}>{c.label}</Text>
             </Pressable>
           );
         })}
       </View>
 
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: 12 }}>
         {events === null && !error ? <Body>불러오는 중이에요…</Body> : null}
         {events?.length === 0 ? <Body>조건에 맞는 행사가 없어요.</Body> : null}
-        {events?.map((e) => (
-          <EventCard key={e.id} event={e} selected={selected?.id === e.id} onPress={() => setSelected(e)} />
-        ))}
+        {events?.map((e) => <EventRow key={e.id} event={e} onPress={() => props.onNext(e)} />)}
       </View>
       <ErrorText message={error ?? props.flowError ?? null} />
 
@@ -130,59 +122,31 @@ export function EventListScreen(props: {
   );
 }
 
-function EventCard(props: { event: EventSummary; selected: boolean; onPress: () => void }) {
-  const { event, selected } = props;
-  const first = describeEventDate(event.days[0].date);
-  const multi = event.days.length > 1;
+function EventRow(props: { event: EventSummary; onPress: () => void }) {
+  const { event } = props;
+  const range = describeEventDateRange(event.days.map((d) => d.date));
   return (
     <Pressable
       onPress={props.onPress}
-      accessibilityRole="radio"
-      accessibilityState={{ selected }}
-      accessibilityLabel={`${event.name}, ${describeEventDateRange(event.days.map((d) => d.date))}, ${event.venue}`}
-      style={{
-        flexDirection: 'row',
-        borderRadius: 14,
-        borderWidth: selected ? 2 : 1.5,
-        borderColor: selected ? colors.ink : colors.border,
-        backgroundColor: selected ? colors.warnBg : colors.white,
-        overflow: 'hidden',
-      }}
+      accessibilityRole="button"
+      accessibilityLabel={`${event.name}, ${EVENT_TYPE_LABELS[event.type]}, ${range}, ${event.venue}. 같이 갈 사람 찾기`}
+      style={{ flexDirection: 'row', gap: 14, padding: 12, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.border }}
     >
-      <View
-        style={{
-          width: 72,
-          paddingVertical: 14,
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 2,
-          borderRightWidth: 2,
-          borderStyle: 'dashed',
-          borderRightColor: selected ? colors.ink : colors.border,
-        }}
-      >
-        <Text style={{ fontSize: 12, fontWeight: '700', color: selected ? colors.ink : colors.muted }}>
-          {`${first.month}월`}
-        </Text>
-        <Text style={{ fontSize: 26, fontWeight: '900', color: colors.ink }}>{first.day}</Text>
-        <Text style={{ fontSize: 12, fontWeight: '700', color: selected ? colors.ink : colors.muted }}>
-          {first.weekday}
-        </Text>
-      </View>
-      <View style={{ flex: 1, padding: 14, gap: 4 }}>
+      <EventArt event={event} width={92} height={92} />
+      <View style={{ flex: 1, gap: 3, justifyContent: 'center' }}>
         <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center' }}>
           <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{EVENT_TYPE_LABELS[event.type]}</Text>
           {event.changed ? (
-            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.white, backgroundColor: colors.ink, paddingHorizontal: 6, borderRadius: 4 }}>
-              일정 변경
-            </Text>
+            <Text style={{ fontSize: 11, fontWeight: '700', color: colors.white, backgroundColor: colors.ink, paddingHorizontal: 6, borderRadius: 4 }}>일정 변경</Text>
           ) : null}
         </View>
-        <Text style={[{ fontSize: 15, fontWeight: '700', lineHeight: 20, color: colors.ink }, keepWords]}>{event.name}</Text>
-        <Text style={{ fontSize: 12, color: colors.body }}>{event.venue}</Text>
-        {multi ? (
-          <Text style={{ fontSize: 12, color: colors.body }}>{describeEventDateRange(event.days.map((d) => d.date))}</Text>
-        ) : null}
+        <Text style={[{ fontSize: 15, fontWeight: '900', lineHeight: 20, color: colors.ink }, keepWords]} numberOfLines={2}>
+          {event.name}
+        </Text>
+        <Text style={{ fontSize: 12, color: colors.body }} numberOfLines={1}>{`${range} · ${event.venue}`}</Text>
+        <View style={{ alignSelf: 'flex-start', marginTop: 4, paddingHorizontal: 10, height: 26, justifyContent: 'center', borderRadius: 13, backgroundColor: colors.ink }}>
+          <Text style={{ fontSize: 11, fontWeight: '700', color: colors.white }}>같이 갈 사람 찾기</Text>
+        </View>
       </View>
     </Pressable>
   );

@@ -9,14 +9,15 @@ import {
   CANCEL_REASON_CODES,
   CANCEL_REASONS,
   dDayLabel,
+  describeEventDateRange,
   describeRemaining,
-  EVENT_CATEGORY_LABELS,
   formatSeoulShort,
   POLICY_DEFAULTS,
   todayInSeoul,
   type AppointmentView,
   type CancelReason,
   type EventCategory,
+  type EventSummary,
   type NotificationView,
   type ProposalView,
 } from '@meets/shared';
@@ -24,6 +25,8 @@ import { api, type HomeSummary } from '../api';
 import { appointmentHeadline, appointmentMode, todoText, upcomingAppointments } from '../appointmentMode';
 import { colors } from '../theme';
 import { Body, Card, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TabBar, TextButton, Title, TopBar, type Tab } from '../ui';
+import { EventArt } from '../EventArt';
+import { HomeSlider } from './HomeSlider';
 import { Avatar, dateText, Row } from './ProposalScreens';
 
 const todayIso = () => {
@@ -53,6 +56,9 @@ function Arrow({ color = colors.ink }: { color?: string }) {
 export function HomeScreen(props: {
   nickname: string;
   onFindEvents: (category?: EventCategory) => void;
+  /** 검색창을 누르면 행사 탭의 검색으로 */
+  onSearch: () => void;
+  onOpenEvent: (e: EventSummary) => void;
   onProposals: () => void;
   onAppointment: (a: AppointmentView) => void;
   onNotifications: () => void;
@@ -61,19 +67,18 @@ export function HomeScreen(props: {
   const [proposals, setProposals] = useState<ProposalView[] | null>(null);
   const [appointments, setAppointments] = useState<AppointmentView[]>([]);
   const [summary, setSummary] = useState<HomeSummary | null>(null);
-  const [counts, setCounts] = useState<Record<EventCategory, number> | null>(null);
+  const [events, setEvents] = useState<EventSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [gridWidth, setGridWidth] = useState(0);
 
   useEffect(() => {
     Promise.all([api.listProposals(), api.listAppointments(), api.getHomeSummary(), api.listEvents({})]).then(
-      ([p, a, s, events]) => {
+      ([p, a, s, list]) => {
         setProposals(p);
         setAppointments(a);
         setSummary(s);
-        setCounts({
-          PERFORMANCE: events.filter((e) => e.category === 'PERFORMANCE').length,
-          EXHIBITION: events.filter((e) => e.category === 'EXHIBITION').length,
-        });
+        // 행사 목록은 날짜 순서로 옵니다.
+        setEvents(list);
       },
       (e: Error) => setError(e.message),
     );
@@ -89,7 +94,9 @@ export function HomeScreen(props: {
 
   return (
     <Page tabBar={<TabBar current="HOME" onChange={props.onTab} chatUnread={chatUnread} />}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8 }}>
+      <HomeSlider events={events.slice(0, 4)} onOpenEvent={props.onOpenEvent} onIntro={() => props.onFindEvents()} />
+
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={{ fontSize: 13, color: colors.muted }}>오늘도 즐거운 행사 되세요</Text>
           <Text style={[{ fontSize: 24, lineHeight: 32, fontWeight: '900', color: colors.ink }, keepWords]}>{`안녕하세요, ${props.nickname}님`}</Text>
@@ -109,6 +116,19 @@ export function HomeScreen(props: {
           </Pressable>
         </View>
       </View>
+
+      <Pressable
+        onPress={props.onSearch}
+        accessibilityRole="search"
+        accessibilityLabel="행사·장소 검색"
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 10, height: 52, paddingHorizontal: 16, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.white }}
+      >
+        <View accessibilityElementsHidden importantForAccessibility="no" style={{ width: 16, height: 16 }}>
+          <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.muted }} />
+          <View style={{ position: 'absolute', right: 0, bottom: 1, width: 6, height: 2, backgroundColor: colors.muted, transform: [{ rotate: '45deg' }] }} />
+        </View>
+        <Text style={{ fontSize: 14, color: colors.muted }}>행사·장소 검색</Text>
+      </Pressable>
 
       {todos.map(({ a, text }) => (
         <Pressable
@@ -161,25 +181,30 @@ export function HomeScreen(props: {
         <Arrow />
       </Pressable>
 
-      <View style={{ gap: 10 }}>
+      <View style={{ gap: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Text style={{ fontSize: 14, fontWeight: '900', color: colors.ink }}>같이 갈 행사 찾기</Text>
+          <Text style={{ fontSize: 16, fontWeight: '900', color: colors.ink }}>곧 열리는 행사</Text>
           <Pressable onPress={() => props.onFindEvents()} accessibilityRole="button" style={{ minHeight: 44, justifyContent: 'center' }}>
-            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>전체 보기</Text>
+            <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>전체 보기</Text>
           </Pressable>
         </View>
-        <View style={{ flexDirection: 'row', gap: 8 }}>
-          {(['PERFORMANCE', 'EXHIBITION'] as EventCategory[]).map((c) => (
-            <Pressable
-              key={c}
-              onPress={() => props.onFindEvents(c)}
-              accessibilityRole="button"
-              style={{ flex: 1, gap: 4, padding: 14, borderRadius: 12, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.border }}
-            >
-              <Text style={[{ fontSize: 13, fontWeight: '700', color: colors.ink }, keepWords]}>{EVENT_CATEGORY_LABELS[c]}</Text>
-              <Text style={{ fontSize: 12, color: colors.muted }}>{counts ? `열리는 행사 ${counts[c]}개` : ' '}</Text>
-            </Pressable>
-          ))}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }} onLayout={(e) => setGridWidth(e.nativeEvent.layout.width)}>
+          {events.slice(0, 4).map((e) => {
+            const w = Math.max(0, (gridWidth - 12) / 2);
+            return (
+              <Pressable
+                key={e.id}
+                onPress={() => props.onOpenEvent(e)}
+                accessibilityRole="button"
+                accessibilityLabel={`${e.name}, ${describeEventDateRange(e.days.map((d) => d.date))}, ${e.venue}`}
+                style={{ width: w, gap: 6, padding: 10, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.border }}
+              >
+                {w > 0 ? <EventArt event={e} width={w - 20} height={(w - 20) * 0.8} /> : null}
+                <Text numberOfLines={2} style={[{ fontSize: 14, lineHeight: 19, fontWeight: '900', color: colors.ink, minHeight: 38 }, keepWords]}>{e.name}</Text>
+                <Text numberOfLines={1} style={{ fontSize: 12, color: colors.muted }}>{describeEventDateRange(e.days.map((d) => d.date))}</Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
       <ErrorText message={error} />
