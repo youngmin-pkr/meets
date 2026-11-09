@@ -11,3 +11,4 @@ export * from './ticket';
 export * from './proposal';
 export * from './appointment';
 export * from './notification';
+export * from './chat';

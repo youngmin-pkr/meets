@@ -49,6 +49,8 @@ import type { PickedImage } from './src/ticketFlow';
 import { ProposalSentScreen, ProposalsScreen } from './src/screens/ProposalScreens';
 import { AppointmentScreen, CancelAppointmentScreen, HomeScreen, NotificationsScreen } from './src/screens/AppointmentScreens';
 import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
+import { ChatListScreen, ChatRulesScreen, ChatScreen } from './src/screens/ChatScreens';
+import type { Tab } from './src/ui';
 
 export default function App() {
   const [config, setConfig] = useState<SignupConfig | null>(null);
@@ -75,6 +77,8 @@ export default function App() {
   const [appointment, setAppointment] = useState<AppointmentView | null>(null);
   const [justAccepted, setJustAccepted] = useState(false);
   const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatBack, setChatBack] = useState<Screen>('CHATS');
   const [eventCategory, setEventCategory] = useState<EventCategory | undefined>(undefined);
   const [reported, setReported] = useState<{ input: EventReportInput; result: EventReportResult } | null>(null);
 
@@ -132,6 +136,18 @@ export default function App() {
       setFlowError(e instanceof Error ? e.message : '다시 시도해 주세요.');
       setScreen('EVENTS');
     }
+  }
+
+  /** 아래쪽 메뉴 */
+  function goTab(t: Tab) {
+    if (t === 'EVENTS') setEventCategory(undefined);
+    setScreen(t);
+  }
+
+  function openChat(appointmentId: string, from: Screen) {
+    setChatId(appointmentId);
+    setChatBack(from);
+    setScreen('CHAT');
   }
 
   function openAppointment(a: AppointmentView, accepted = false) {
@@ -281,6 +297,7 @@ export default function App() {
             onProposals={() => setScreen('PROPOSALS')}
             onAppointment={(a) => openAppointment(a)}
             onNotifications={() => setScreen('NOTIFICATIONS')}
+            onTab={goTab}
           />
         )}
         {screen === 'EVENTS' && (
@@ -309,11 +326,29 @@ export default function App() {
               setScreen('APPOINTMENT_CANCEL');
             }}
             onFindOthers={openCandidates}
+            onChat={(id) => openChat(id, 'APPOINTMENT')}
           />
         )}
         {screen === 'APPOINTMENT_CANCEL' && appointment && (
           <CancelAppointmentScreen appointment={appointment} onBack={() => setScreen('APPOINTMENT')} onDone={(a) => openAppointment(a)} />
         )}
+        {screen === 'CHATS' && <ChatListScreen onOpen={(id) => openChat(id, 'CHATS')} onTab={goTab} />}
+        {screen === 'CHAT' && chatId && (
+          <ChatScreen
+            key={chatId}
+            appointmentId={chatId}
+            onBack={async () => {
+              // 약속 화면에서 왔으면 최신 약속으로 돌아갑니다.
+              if (chatBack === 'APPOINTMENT') {
+                const fresh = await api.getAppointment(chatId).catch(() => null);
+                if (fresh) setAppointment(fresh);
+              }
+              setScreen(chatBack);
+            }}
+            onRules={() => setScreen('CHAT_RULES')}
+          />
+        )}
+        {screen === 'CHAT_RULES' && <ChatRulesScreen onBack={() => setScreen('CHAT')} />}
         {screen === 'NOTIFICATIONS' && (
           <NotificationsScreen
             onBack={() => setScreen('HOME')}

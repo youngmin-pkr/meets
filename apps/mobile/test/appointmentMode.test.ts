@@ -22,6 +22,7 @@ function view(o: Partial<AppointmentView> = {}): AppointmentView {
     end: null,
     actions: { ...noActions, cancel: true },
     needsAction: false,
+    unreadMessages: 0,
     ...o,
   };
 }

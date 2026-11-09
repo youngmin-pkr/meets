@@ -39,7 +39,10 @@ export type AppErrorCode =
   | 'PROPOSAL_STATE'
   | 'APPOINTMENT_STATE'
   | 'APPOINTMENT_NOT_NOW'
-  | 'APPOINTMENT_OVERLAP';
+  | 'APPOINTMENT_OVERLAP'
+  | 'CHAT_CLOSED'
+  | 'CHAT_INVALID'
+  | 'CONTACT_DETECTED';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -79,6 +82,9 @@ const STATUS: Record<AppErrorCode, number> = {
   APPOINTMENT_STATE: 409,
   APPOINTMENT_NOT_NOW: 409,
   APPOINTMENT_OVERLAP: 409,
+  CHAT_CLOSED: 409,
+  CHAT_INVALID: 400,
+  CONTACT_DETECTED: 409,
 };
 
 export class AppError extends Error {
@@ -87,7 +93,7 @@ export class AppError extends Error {
   constructor(
     readonly code: AppErrorCode,
     message: string,
-    readonly detail?: Record<string, string | number | boolean>,
+    readonly detail?: Record<string, string | number | boolean | string[]>,
   ) {
     super(message);
     this.name = 'AppError';

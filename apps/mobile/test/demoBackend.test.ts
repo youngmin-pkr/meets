@@ -488,3 +488,71 @@ describe('데모: 약속 (전날 확인·취소·알림)', () => {
   });
 });
 
+
+describe('데모: 앱 안 채팅', () => {
+  async function member() {
+    let clock = new Date('2026-11-07T03:00:00Z'); // 한국 시간 11월 7일 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity('fake:chat1:2000-01-01:F', ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모채팅', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const [a] = await backend.listAppointments();
+    const tick = (ms: number) => {
+      clock = new Date(clock.getTime() + ms);
+    };
+    return { backend, a, tick };
+  }
+
+  test('약속이 생기면 채팅이 열려 있고, 예시 상대의 인사가 안 읽은 메시지로 보인다', async () => {
+    const { backend, a } = await member();
+    expect(a.unreadMessages).toBe(1);
+    const [summary] = await backend.listChats();
+    expect(summary).toMatchObject({ appointmentId: a.id, open: true, unread: 1, counterpart: { nickname: '하늘' } });
+    const chat = await backend.getChat(a.id);
+    expect(chat.messages.map((m) => m.kind)).toEqual(['SYSTEM', 'TEXT']);
+    expect((await backend.listChats())[0].unread).toBe(0);
+  });
+
+  test('내가 보내면 예시 상대가 잠시 뒤 답하고, 새 메시지만 이어서 받을 수 있다', async () => {
+    const { backend, a, tick } = await member();
+    const mine = await backend.sendChat(a.id, '안녕하세요!');
+    expect(mine).toMatchObject({ mine: true, kind: 'TEXT', flagged: false });
+    tick(1500);
+    const next = await backend.getChat(a.id, mine.seq);
+    expect(next.messages).toEqual([expect.objectContaining({ mine: false, kind: 'TEXT' })]);
+  });
+
+  test('연락처는 멈추고, 그래도 보내면 기록이 남는다', async () => {
+    const { backend, a } = await member();
+    await expect(backend.sendChat(a.id, '카톡 아이디 알려 주세요')).rejects.toMatchObject({ code: 'CONTACT_DETECTED', detail: { kinds: ['MESSENGER'] } });
+    expect(await backend.sendChat(a.id, '카톡 아이디 알려 주세요', true)).toMatchObject({ flagged: true });
+    await expect(backend.sendChat(a.id, '  ')).rejects.toMatchObject({ code: 'CHAT_INVALID' });
+    await expect(backend.sendChat(a.id, '가'.repeat(501))).rejects.toMatchObject({ code: 'CHAT_INVALID' });
+  });
+
+  test('약속을 취소하면 채팅이 닫히고 읽기만 된다', async () => {
+    const { backend, a } = await member();
+    await backend.cancelAppointment(a.id);
+    const chat = await backend.getChat(a.id);
+    expect(chat).toMatchObject({ open: false, appointmentStatus: 'CANCELLED' });
+    expect(chat.messages[chat.messages.length - 1]).toMatchObject({ kind: 'SYSTEM', body: '약속이 취소됐어요. 채팅이 닫혔어요.' });
+    await expect(backend.sendChat(a.id, '다시 될까요?')).rejects.toMatchObject({ code: 'CHAT_CLOSED' });
+  });
+
+  test('만남이 끝나고 24시간 뒤 닫힌다', async () => {
+    const { backend, a, tick } = await member();
+    await backend.confirmAppointment(a.id);
+    tick(30 * 60 * 60 * 1000); // 다음 날 18시 → 만남 끝
+    expect((await backend.getChat(a.id)).open).toBe(true);
+    tick(24 * 60 * 60 * 1000);
+    expect((await backend.getChat(a.id)).open).toBe(false);
+  });
+
+  test('다른 사람의 채팅은 볼 수 없다', async () => {
+    const { backend } = await member();
+    await expect(backend.getChat('demo-appointment-999')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});

@@ -4,6 +4,8 @@ import { AppointmentStateService } from './appointments/appointment-state.servic
 import { AppointmentsController } from './appointments/appointments.controller';
 import { AppointmentsService } from './appointments/appointments.service';
 import { NotificationsService } from './notifications/notifications.service';
+import { ChatController } from './chat/chat.controller';
+import { ChatService } from './chat/chat.service';
 import { AdminAuthService, AdminGuard } from './admin/admin-auth';
 import { AdminController } from './admin/admin.controller';
 import { AuditService } from './admin/audit.service';
@@ -36,7 +38,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -66,6 +68,7 @@ export class AppModule {
         NotificationsService,
         AppointmentStateService,
         AppointmentsService,
+        ChatService,
       ],
     };
   }

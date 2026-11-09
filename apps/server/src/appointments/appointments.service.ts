@@ -1,6 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   ACTIVE_APPOINTMENT_STATUSES,
+  arrivedLine,
   APPOINTMENT_POLICY_KEYS,
   appointmentActions,
   appointmentPolicyFrom,
@@ -25,6 +26,7 @@ import {
   type Counterpart,
   type TimeRange,
 } from '@meets/shared';
+import { chatSystemLine, unreadCounts } from '../chat/chat-unread';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
@@ -258,7 +260,7 @@ export class AppointmentsService {
 
   // ───────────── 조회 ─────────────
 
-  private toView(a: Row, me: string, now: Date): AppointmentView {
+  private toView(a: Row, me: string, now: Date, unreadMessages = 0): AppointmentView {
     const f = factsOf(a);
     const t = factsTimes(f);
     const mine = a.participants.find((p) => p.userId === me)!;
@@ -307,6 +309,7 @@ export class AppointmentsService {
         : null,
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
+      unreadMessages,
     };
   }
 
@@ -319,7 +322,8 @@ export class AppointmentsService {
       take: 100,
     });
     const now = this.clock.now();
-    return rows.map((a) => this.toView(a, userId, now));
+    const unread = await unreadCounts(this.prisma, userId, rows.map((a) => a.id));
+    return rows.map((a) => this.toView(a, userId, now, unread.get(a.id)));
   }
 
   /** 내 약속 하나. 약속에 없는 사람에게는 '찾을 수 없어요' (CLAUDE.md 규칙 3) */
@@ -331,7 +335,8 @@ export class AppointmentsService {
 
   async get(userId: string, id: string): Promise<AppointmentView> {
     await this.settle({ id, participants: { some: { userId } } });
-    return this.toView(await this.load(userId, id), userId, this.clock.now());
+    const unread = await unreadCounts(this.prisma, userId, [id]);
+    return this.toView(await this.load(userId, id), userId, this.clock.now(), unread.get(id));
   }
 
   /** 같은 약속을 동시에 바꾸지 않도록 줄을 세웁니다. (둘이 동시에 '갈 수 있어요'를 눌러도 한 번만 확정) */
@@ -483,6 +488,7 @@ export class AppointmentsService {
     await this.prisma.$transaction(async (tx) => {
       const marked = await tx.appointmentParticipant.updateMany({ where: { appointmentId: a.id, userId, arrivedAt: null }, data: { arrivedAt: now } });
       if (marked.count === 1) {
+        await chatSystemLine(tx, a.id, arrivedLine(this.nickname(a, userId)), now);
         await this.notifications.notify(tx, other.userId, 'PARTNER_ARRIVED', { nickname: this.nickname(a, userId), spotName: a.meetingSpotName }, { appointmentId: a.id });
       }
     });

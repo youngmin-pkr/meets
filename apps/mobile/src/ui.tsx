@@ -3,13 +3,53 @@ import type { ReactNode } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
 import { colors } from './theme';
 
-export function Page({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+export function Page({ children, footer, tabBar }: { children: ReactNode; footer?: ReactNode; tabBar?: ReactNode }) {
   return (
     <View style={styles.page}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {children}
       </ScrollView>
       {footer ? <View style={styles.footer}>{footer}</View> : null}
+      {tabBar}
+    </View>
+  );
+}
+
+export type Tab = 'HOME' | 'EVENTS' | 'CHATS';
+
+/** 아래쪽 메뉴 (홈·행사·채팅). '나' 화면은 만들 때 추가합니다. */
+export function TabBar(props: { current: Tab; onChange: (t: Tab) => void; chatUnread?: number }) {
+  const tabs: Array<{ key: Tab; label: string }> = [
+    { key: 'HOME', label: '홈' },
+    { key: 'EVENTS', label: '행사' },
+    { key: 'CHATS', label: '채팅' },
+  ];
+  return (
+    <View accessibilityRole="tablist" style={{ flexDirection: 'row', height: 64, borderTopWidth: 1.5, borderTopColor: colors.border, backgroundColor: colors.white }}>
+      {tabs.map((t) => {
+        const on = t.key === props.current;
+        const badge = t.key === 'CHATS' && props.chatUnread ? props.chatUnread : 0;
+        return (
+          <Pressable
+            key={t.key}
+            onPress={() => props.onChange(t.key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: on }}
+            accessibilityLabel={badge ? `${t.label}, 안 읽은 메시지 ${badge}개` : t.label}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4 }}
+          >
+            <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: on ? colors.primary : 'transparent' }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <Text style={{ fontSize: 13, fontWeight: on ? '900' : '500', color: on ? colors.primary : colors.muted }}>{t.label}</Text>
+              {badge ? (
+                <View style={{ minWidth: 18, height: 18, paddingHorizontal: 5, borderRadius: 9, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontSize: 11, fontWeight: '900', color: colors.white }}>{badge > 99 ? '99+' : badge}</Text>
+                </View>
+              ) : null}
+            </View>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }

@@ -23,7 +23,7 @@ import {
 import { api, type HomeSummary } from '../api';
 import { appointmentHeadline, appointmentMode, todoText, upcomingAppointments } from '../appointmentMode';
 import { colors } from '../theme';
-import { Body, Card, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
+import { Body, Card, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TabBar, TextButton, Title, TopBar, type Tab } from '../ui';
 import { Avatar, dateText, Row } from './ProposalScreens';
 
 const todayIso = () => {
@@ -56,6 +56,7 @@ export function HomeScreen(props: {
   onProposals: () => void;
   onAppointment: (a: AppointmentView) => void;
   onNotifications: () => void;
+  onTab: (t: Tab) => void;
 }) {
   const [proposals, setProposals] = useState<ProposalView[] | null>(null);
   const [appointments, setAppointments] = useState<AppointmentView[]>([]);
@@ -84,9 +85,10 @@ export function HomeScreen(props: {
   const upcoming = upcomingAppointments(appointments);
   const todos = upcoming.map((a) => ({ a, text: todoText(a, today) })).filter((x) => x.text);
   const soonest = received.map((p) => p.expiresAt).sort()[0];
+  const chatUnread = appointments.reduce((n, a) => n + a.unreadMessages, 0);
 
   return (
-    <Page>
+    <Page tabBar={<TabBar current="HOME" onChange={props.onTab} chatUnread={chatUnread} />}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 8 }}>
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={{ fontSize: 13, color: colors.muted }}>오늘도 즐거운 행사 되세요</Text>
@@ -139,6 +141,9 @@ export function HomeScreen(props: {
           <Text style={[{ fontSize: 13, color: colors.body }, keepWords]}>
             {`${dateText(a.day.date)} ${a.day.startTime} · ${a.segments.map((s) => s.label).join(', ') || '행사 시간'} · ${a.counterpart.nickname}님`}
           </Text>
+          {a.unreadMessages ? (
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{`안 읽은 메시지 ${a.unreadMessages}개`}</Text>
+          ) : null}
         </Pressable>
       ))}
 
@@ -254,6 +259,7 @@ export function AppointmentScreen(props: {
   onBack: () => void;
   onCancel: (a: AppointmentView) => void;
   onFindOthers: (eventId: string) => void;
+  onChat: (appointmentId: string) => void;
 }) {
   const [a, setA] = useState(props.appointment);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +380,20 @@ export function AppointmentScreen(props: {
         <Row label="상대" text={nick} />
       </View>
 
+      <Pressable
+        onPress={() => props.onChat(a.id)}
+        accessibilityRole="button"
+        style={[styles.row, { padding: 14, borderRadius: 14, borderWidth: 1.5, borderColor: a.unreadMessages ? colors.ink : colors.border, backgroundColor: colors.white }]}
+      >
+        <View style={{ flex: 1, gap: 2 }}>
+          <Text style={{ fontSize: 14, fontWeight: '900', color: colors.ink }}>{`${nick}과 대화하기`}</Text>
+          <Text style={[{ fontSize: 12, color: colors.muted }, keepWords]}>
+            {a.unreadMessages ? `안 읽은 메시지 ${a.unreadMessages}개` : closed ? '지난 대화를 볼 수 있어요' : '연락처 없이 앱 안에서 대화해요'}
+          </Text>
+        </View>
+        <Arrow />
+      </Pressable>
+
       {mode === 'WAITING_DAY_BEFORE' ? (
         <View>
           <Text style={{ fontSize: 13, fontWeight: '700', marginBottom: 10 }}>앞으로 이렇게 진행돼요</Text>
@@ -428,7 +448,7 @@ export function AppointmentScreen(props: {
       {a.actions.cancel ? (
         <Note>{`${formatSeoulShort(a.freeCancelUntil)}까지 취소하면 신뢰 단계에 영향이 없어요. 그 뒤의 취소나 무응답은 반영돼요.`}</Note>
       ) : null}
-      {!closed ? <Body>연락처는 공개되지 않아요. 약속에 대한 대화는 앱 안 채팅으로 하게 돼요.</Body> : null}
+      {!closed ? <Body>연락처는 공개되지 않아요. 약속에 대한 대화는 앱 안 채팅으로 해요.</Body> : null}
       <ErrorText message={error} />
     </Page>
   );

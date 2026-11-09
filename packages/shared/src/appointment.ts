@@ -300,6 +300,8 @@ export interface AppointmentView {
   actions: AppointmentActions;
   /** 오늘 할 일로 보여 줄지 (지금 눌러야 하는 것이 있음) */
   needsAction: boolean;
+  /** 이 약속 채팅에서 내가 아직 읽지 않은 상대 메시지 수 */
+  unreadMessages: number;
 }
 
 /** D-day 글 (한국 날짜 기준) */
