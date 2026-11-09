@@ -33,6 +33,7 @@ import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
+import { ReportStateService } from '../reports/report-state.service';
 import { TrustService } from '../trust/trust.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentStateService } from './appointment-state.service';
@@ -146,6 +147,7 @@ export class AppointmentsService {
     private readonly state: AppointmentStateService,
     private readonly notifications: NotificationsService,
     private readonly trust: TrustService,
+    private readonly reports: ReportStateService,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -525,7 +527,7 @@ export class AppointmentsService {
 
   /**
    * '안 나왔어요'. 내 도착 기록이 있고 상대 기록이 없을 때, 약속 15분 뒤부터.
-   * 바로 노쇼로 확정하지 않고 양쪽 도착 기록을 남겨 두며, 판단은 7단계 신고 처리에서 합니다.
+   * 바로 노쇼로 확정하지 않고 양쪽 도착 기록을 남겨 두며, 판단은 운영팀의 신고 처리에서 합니다.
    */
   async reportNoShow(userId: string, id: string): Promise<AppointmentView> {
     await this.settle({ id });
@@ -542,6 +544,8 @@ export class AppointmentsService {
         data: { noShowReportedAt: now },
       });
       await this.notifications.notify(tx, other.userId, 'APPOINTMENT_ENDED_EARLY', { eventName: a.event.name }, { appointmentId: a.id });
+      // 바로 노쇼로 정하지 않고, 양쪽 도착 기록을 운영팀이 함께 보고 판단하도록 신고 대기열에 올립니다. (정리문서 2장 약속)
+      await this.reports.createQueued(tx, { reporterId: userId, targetId: other.userId, appointmentId: a.id, category: 'NO_SHOW', detail: null });
     });
     return this.get(userId, id);
   }
@@ -603,29 +607,38 @@ export class AppointmentsService {
    * 만남 중이면 '중간 종료'로 끝납니다.
    */
   async endForBlock(tx: Prisma.TransactionClient, blockerId: string, otherId: string) {
-    const now = this.clock.now();
-    const rows = await tx.appointment.findMany({
-      where: {
-        status: { in: ENDABLE },
-        AND: [{ participants: { some: { userId: blockerId } } }, { participants: { some: { userId: otherId } } }],
-      },
-      include,
+    return this.endEach(tx, blockerId, {
+      AND: [{ participants: { some: { userId: blockerId } } }, { participants: { some: { userId: otherId } } }],
     });
+  }
+
+  /**
+   * 이용 정지되면 그 사람의 진행 중인 약속을 모두 끝냅니다. 상대에게는 이유 없이 '약속이 취소됐어요'만 알립니다.
+   * 정지된 사람에게는 임박 취소 기록을 남기지 않습니다. (이미 다른 제재를 받았으므로)
+   */
+  async endForSuspension(tx: Prisma.TransactionClient, userId: string) {
+    return this.endEach(tx, userId, { participants: { some: { userId } } });
+  }
+
+  private async endEach(tx: Prisma.TransactionClient, byUserId: string, where: Prisma.AppointmentWhereInput) {
+    const now = this.clock.now();
+    const rows = await tx.appointment.findMany({ where: { ...where, status: { in: ENDABLE } }, include });
     for (const a of rows) {
       const to: AppointmentStatus = a.status === 'IN_PROGRESS' ? 'ENDED_EARLY' : 'CANCELLED';
       await this.state.transition(tx, a.id, a.status as AppointmentStatus, to, {
         endReason: 'CANCELLED' satisfies AppointmentEndReason,
-        cancelledById: blockerId,
+        cancelledById: byUserId,
       });
       await tx.appointmentParticipant.update({
-        where: { appointmentId_userId: { appointmentId: a.id, userId: blockerId } },
+        where: { appointmentId_userId: { appointmentId: a.id, userId: byUserId } },
         data: { cancelledAt: now, lateCancel: false },
       });
+      const other = a.participants.find((p) => p.userId !== byUserId)!;
       await this.notifications.notify(
         tx,
-        otherId,
+        other.userId,
         'APPOINTMENT_CANCELLED',
-        { nickname: this.nickname(a, blockerId), eventName: a.event.name, reason: null },
+        { nickname: this.nickname(a, byUserId), eventName: a.event.name, reason: null },
         { appointmentId: a.id },
       );
     }

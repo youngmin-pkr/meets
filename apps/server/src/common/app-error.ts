@@ -48,7 +48,10 @@ export type AppErrorCode =
   | 'REVIEW_EXISTS'
   | 'BLOCK_INVALID'
   | 'REPORT_INVALID'
-  | 'REPORT_EXISTS';
+  | 'REPORT_EXISTS'
+  | 'REPORT_STATE'
+  | 'REASON_REQUIRED'
+  | 'RESTRICTED';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -97,6 +100,9 @@ const STATUS: Record<AppErrorCode, number> = {
   BLOCK_INVALID: 400,
   REPORT_INVALID: 400,
   REPORT_EXISTS: 409,
+  REPORT_STATE: 409,
+  REASON_REQUIRED: 400,
+  RESTRICTED: 403,
 };
 
 export class AppError extends Error {

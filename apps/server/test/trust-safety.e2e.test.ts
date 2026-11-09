@@ -313,7 +313,7 @@ describe('신고 접수', () => {
     const res = await report(a, id).expect(201);
     expect(res.body).toMatchObject({ received: true, blocked: false });
     const row = await f.prisma.report.findUniqueOrThrow({ where: { id: res.body.id } });
-    expect(row).toMatchObject({ reporterId: a.userId, targetId: b.userId, appointmentId: id, category: 'STALKING', status: 'RECEIVED', priority: 'GENERAL', upheld: null });
+    expect(row).toMatchObject({ reporterId: a.userId, targetId: b.userId, appointmentId: id, category: 'STALKING', status: 'QUEUED', priority: 'GENERAL', upheld: null });
     expect(await kinds(b)).not.toContain('REPORT_RECEIVED');
     expect(JSON.stringify([(await appt(b, id)).body, (await http(app).get('/me/notifications').set(auth(b.token))).body])).not.toMatch(/신고|STALKING/);
     // 신고해도 나에게는 약속 정보가 그대로 보인다
@@ -373,13 +373,6 @@ describe('신고 접수', () => {
     } finally {
       spies.forEach((s) => s.mockRestore());
     }
-  });
-
-  test('이번 단계에는 운영자가 신고를 볼 수 있는 주소가 없다 (처리는 7-2단계)', async () => {
-    const { a, id } = await ended();
-    await report(a, id).expect(201);
-    const admin = await adminToken(app, 'REPORT_MANAGER', 'reportviewer');
-    await http(app).get('/admin/reports').set(auth(admin)).expect(404);
   });
 });
 

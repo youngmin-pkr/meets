@@ -22,7 +22,10 @@ export type NotificationKind =
   | 'APPOINTMENT_ON_HOLD'
   | 'EVENT_CANCELLED'
   | 'REVIEW_REQUEST'
-  | 'REVIEW_MUTUAL_AGAIN';
+  | 'REVIEW_MUTUAL_AGAIN'
+  | 'REPORT_RESULT'
+  | 'ADMIN_WARNING'
+  | 'ADMIN_RESTRICTION';
 
 export interface NotificationParams {
   nickname?: string;
@@ -33,6 +36,10 @@ export interface NotificationParams {
   deadline?: string;
   spotName?: string;
   reason?: string | null;
+  /** 신고를 운영팀이 사실로 확인했는지 */
+  upheld?: boolean;
+  /** 제한이 풀리는 시각 글자 */
+  until?: string;
 }
 
 /** 알림 (앱이 받는 모양) */
@@ -92,6 +99,14 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return { title: '행사가 취소됐어요', body: `${ev} 행사가 취소되어 약속이 자동으로 끝났어요. 신뢰 단계에 영향이 없어요.` };
     case 'REVIEW_REQUEST':
       return { title: '만남은 어땠어요?', body: `${nick}과 함께한 ${ev} 만남이 끝났어요. ${p.deadline}까지 후기를 남겨 주세요. 내가 남긴 후기는 상대에게 보이지 않아요.` };
+    case 'REPORT_RESULT':
+      return p.upheld
+        ? { title: '신고를 확인했어요', body: '운영팀이 신고하신 내용을 확인하고 필요한 조치를 했어요. 신고하신 분의 정보는 상대에게 공개되지 않아요.' }
+        : { title: '신고를 확인했어요', body: '운영팀이 확인했지만 조치할 내용을 찾지 못했어요. 위험하다고 느끼면 언제든 다시 알려 주세요.' };
+    case 'ADMIN_WARNING':
+      return { title: '운영 안내', body: '다른 이용자의 신고가 확인되어 안내드려요. 모두가 편안하게 만날 수 있도록 이용 규칙을 지켜 주세요.' };
+    case 'ADMIN_RESTRICTION':
+      return { title: '운영 안내', body: `신고가 확인되어 ${p.until}까지 제안 보내기와 수락이 제한돼요. 채팅과 이미 만든 약속은 그대로 쓸 수 있어요.` };
     case 'REVIEW_MUTUAL_AGAIN':
       return { title: '서로 또 같이 가고 싶어 해요', body: `${nick}과 서로 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드리고, 채팅도 계속 열려 있어요.` };
   }

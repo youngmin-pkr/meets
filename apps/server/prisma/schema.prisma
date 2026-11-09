@@ -69,6 +69,7 @@ model User {
   reportsMade         Report[]   @relation("ReportReporter")
   reportsReceived     Report[]   @relation("ReportTarget")
   trustChanges        TrustChange[]
+  restrictions        UserRestriction[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -282,6 +283,7 @@ model AdminUser {
   active       Boolean        @default(true)
   createdAt    DateTime       @default(now())
   sessions     AdminSession[]
+  reports      Report[]
 }
 
 model AdminSession {
@@ -302,6 +304,8 @@ enum ApprovalKind {
 enum ApprovalStatus {
   PENDING
   CONFIRMED
+  /// 확정하는 사람이 확정하지 않고 되돌림
+  REJECTED
 }
 
 /// 두 명 확인 작업. 제안자와 확정자는 달라야 합니다.
@@ -609,6 +613,9 @@ enum NotificationKind {
   EVENT_CANCELLED
   REVIEW_REQUEST
   REVIEW_MUTUAL_AGAIN
+  REPORT_RESULT
+  ADMIN_WARNING
+  ADMIN_RESTRICTION
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -723,6 +730,8 @@ enum ReportCategory {
   OTHER_PURPOSE
   MONEY
   OTHER
+  /// 사용자가 고르는 분류가 아니라, '안 나왔어요'를 누르면 시스템이 만듭니다
+  NO_SHOW
 }
 
 /// 도움 요청 > 청소년 신고 > 일반 신고 (정리문서 5장)
@@ -752,16 +761,39 @@ model Report {
   detail        String?
   priority      ReportPriority
   status        ReportStatus
-  /// 운영팀이 사실로 확인했는지 (7-2단계에서 정함. 신뢰 4단계 조건에 씀)
+  /// 운영팀이 사실로 확인했는지 (조치 없음이면 false). 신뢰 4단계 조건에 씀
   upheld        Boolean?
+  /// 담당자 (대기 → 처리 중으로 바뀔 때 지정)
+  assigneeId    String?
+  /// NO_ACTION | RECORD_ONLY | WARN | RESTRICT | SUSPEND
+  outcome       String?
+  resolvedAt    DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
+  assignee      AdminUser?     @relation(fields: [assigneeId], references: [id])
+  restrictions  UserRestriction[]
   reporter      User           @relation("ReportReporter", fields: [reporterId], references: [id])
   target        User           @relation("ReportTarget", fields: [targetId], references: [id])
   appointment   Appointment    @relation(fields: [appointmentId], references: [id])
 
   @@index([status, priority, createdAt])
   @@index([targetId, upheld])
+  @@index([assigneeId, status])
+}
+
+/// 신고 조치 '기능 제한'. 제한 기간 동안 제안 보내기·수락만 막습니다. (채팅·열람은 허용)
+model UserRestriction {
+  id        String   @id @default(uuid())
+  userId    String
+  reportId  String
+  /// PROPOSALS (제안 보내기·수락)
+  kind      String
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  report    Report   @relation(fields: [reportId], references: [id])
+
+  @@index([userId, endsAt])
 }
 
 /// 신뢰 단계가 바뀐 기록 (정리문서 4장 TrustLevel). 숫자 점수는 저장하지 않습니다.

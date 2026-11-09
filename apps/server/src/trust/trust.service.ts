@@ -32,7 +32,8 @@ export class TrustService {
       db.attendancePlan.count({ where: { userId } }),
       db.ticketVerification.count({ where: { userId, status: { in: ['VERIFIED'] } } }),
       db.review.count({ where: { targetId: userId, overall: { in: ['GREAT', 'OK'] } } }),
-      db.report.count({ where: { targetId: userId, upheld: true } }),
+      // 운영팀이 사실로 확인한 불편 신고 (노쇼 확인은 아래에서 따로 셈)
+      db.report.count({ where: { targetId: userId, upheld: true, category: { not: 'NO_SHOW' } } }),
       // 임박 취소: 약속 24시간 안에 내가 취소한 것
       db.appointmentParticipant.count({ where: { userId, lateCancel: true, cancelledAt: { gte: since } } }),
       // 무응답: 확인 마감까지 확인하지 않아 약속이 취소된 것

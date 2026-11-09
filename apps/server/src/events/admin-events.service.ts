@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { APPROVAL } from '../admin/approval-status';
 import { AuditService } from '../admin/audit.service';
 import { AppointmentsService } from '../appointments/appointments.service';
 import { AppError } from '../common/app-error';
@@ -17,9 +18,6 @@ const fullInclude = {
     select: { id: true, name: true, dateText: true, placeText: true, officialUrl: true, createdAt: true },
   },
 } satisfies Prisma.EventInclude;
-
-/** 두 명 확인 작업(AdminApproval)의 상태. 행사·티켓 상태와 이름이 겹쳐서 상수로 씁니다. */
-const APPROVAL = { PENDING: 'PENDING', CONFIRMED: 'CONFIRMED' } as const;
 
 /**
  * 운영 콘솔의 행사 기능 (행사 등록·수정, 제보 검수, 행사 취소)

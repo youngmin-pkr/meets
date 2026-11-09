@@ -17,7 +17,87 @@ export const REPORT_CATEGORIES = {
 export type ReportCategory = keyof typeof REPORT_CATEGORIES;
 export const REPORT_CATEGORY_CODES = Object.keys(REPORT_CATEGORIES) as ReportCategory[];
 
+/** 사용자가 고를 수 없고 시스템이 만드는 분류: '안 나왔어요'를 누르면 운영팀이 양쪽 도착 기록을 보고 판단합니다 */
+export const SYSTEM_REPORT_CATEGORIES = { NO_SHOW: '안 나왔어요 (도착 기록 확인)' } as const;
+export type ReportCategoryAll = ReportCategory | keyof typeof SYSTEM_REPORT_CATEGORIES;
+export const REPORT_CATEGORY_LABELS: Record<ReportCategoryAll, string> = { ...REPORT_CATEGORIES, ...SYSTEM_REPORT_CATEGORIES };
+
 export type ReportPriority = 'HELP' | 'TEEN' | 'GENERAL';
+
+/** 처리 순서: 도움 요청 > 청소년 신고 > 일반 신고 */
+export const REPORT_PRIORITY_ORDER: ReportPriority[] = ['HELP', 'TEEN', 'GENERAL'];
+export const REPORT_PRIORITY_LABELS: Record<ReportPriority, string> = { HELP: '도움 요청', TEEN: '청소년', GENERAL: '일반' };
+
+/** 신고 상태 (정리문서 5장 "신고") */
+export type ReportStatus = 'RECEIVED' | 'QUEUED' | 'IN_REVIEW' | 'SUSPENSION_PROPOSED' | 'CONFIRMED' | 'CLOSED';
+export const REPORT_STATUSES: ReportStatus[] = ['RECEIVED', 'QUEUED', 'IN_REVIEW', 'SUSPENSION_PROPOSED', 'CONFIRMED', 'CLOSED'];
+export const REPORT_STATUS_LABELS: Record<ReportStatus, string> = {
+  RECEIVED: '접수',
+  QUEUED: '대기',
+  IN_REVIEW: '처리 중',
+  SUSPENSION_PROPOSED: '정지 제안',
+  CONFIRMED: '확정',
+  CLOSED: '종결',
+};
+
+/** 신고 상태 전이 표 (정리문서 5장 "신고"). 표에 있는 전이만 허용하고 나머지는 거절합니다. */
+export const REPORT_TRANSITIONS: Array<{ from: ReportStatus; to: ReportStatus; condition: string; twoPerson?: boolean }> = [
+  { from: 'RECEIVED', to: 'QUEUED', condition: '도움 요청 > 청소년 신고 > 일반 신고 순으로 정렬해 대기열에 올림' },
+  { from: 'QUEUED', to: 'IN_REVIEW', condition: '담당자가 지정됨. 대화를 열람하면 사유가 기록됨' },
+  { from: 'IN_REVIEW', to: 'SUSPENSION_PROPOSED', condition: '신고 담당이 이용 정지를 제안' },
+  { from: 'SUSPENSION_PROPOSED', to: 'CONFIRMED', condition: '다른 관리자가 확정 (2명 확인)', twoPerson: true },
+  { from: 'IN_REVIEW', to: 'CLOSED', condition: '조치 없음이거나 조치가 끝남' },
+  { from: 'SUSPENSION_PROPOSED', to: 'IN_REVIEW', condition: '다른 관리자가 정지를 확정하지 않고 되돌림 (2026-11-09 추가)' },
+  { from: 'CONFIRMED', to: 'CLOSED', condition: '정지가 적용되고 조치가 끝남 (2026-11-09 추가)' },
+];
+
+export function reportTransition(from: ReportStatus, to: ReportStatus) {
+  return REPORT_TRANSITIONS.find((t) => t.from === from && t.to === to) ?? null;
+}
+
+/** 운영팀이 고르는 조치 (정리문서 7장 시안: 기록만 남기기, 경고, 기능 제한 N일, 이용 정지). 이용 정지는 두 명 확인이라 따로 제안합니다. */
+export const REPORT_RESOLVE_ACTIONS = {
+  NO_ACTION: { label: '조치 없음', upheld: false },
+  RECORD_ONLY: { label: '기록만 남기기', upheld: true },
+  WARN: { label: '경고', upheld: true },
+  RESTRICT: { label: '기능 제한', upheld: true },
+} as const;
+export type ReportResolveAction = keyof typeof REPORT_RESOLVE_ACTIONS;
+export const REPORT_RESOLVE_ACTION_CODES = Object.keys(REPORT_RESOLVE_ACTIONS) as ReportResolveAction[];
+
+/** 신고를 처리한 결과 (종결된 신고에 남음) */
+export type ReportOutcome = ReportResolveAction | 'SUSPEND';
+
+/** 운영 콘솔의 신고 목록 한 줄. 이름·내용은 상세에서만 보입니다. */
+export interface AdminReportQueueItem {
+  id: string;
+  status: ReportStatus;
+  priority: ReportPriority;
+  category: ReportCategoryAll;
+  categoryLabel: string;
+  eventName: string;
+  createdAt: string;
+  assigned: boolean;
+  assignedToMe: boolean;
+}
+
+/** 운영 콘솔의 신고 상세 (대화 내용은 들어 있지 않음. 대화는 사유를 적고 따로 엽니다) */
+export interface AdminReportDetail extends AdminReportQueueItem {
+  detail: string | null;
+  appointment: { id: string; date: string; startTime: string; endTime: string; status: string };
+  reporter: { nickname: string; ageClass: string; arrivedAt: string | null };
+  target: { nickname: string; ageClass: string; arrivedAt: string | null };
+  /** 상대에게 접수된 다른 신고 수 / 그중 운영팀이 사실로 확인한 수 */
+  targetPastReports: { total: number; upheld: number };
+  pendingSuspension: { approvalId: string; proposedByMe: boolean } | null;
+  outcome: ReportOutcome | null;
+}
+
+/** 운영팀이 신고 건에서 연 대화 기록 */
+export interface AdminReportChat {
+  reportId: string;
+  messages: Array<{ seq: number; side: 'REPORTER' | 'TARGET' | 'SYSTEM'; body: string; createdAt: string; contactDetected: boolean }>;
+}
 
 export interface ReportInput {
   appointmentId: string;

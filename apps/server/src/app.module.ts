@@ -6,6 +6,8 @@ import { AppointmentsService } from './appointments/appointments.service';
 import { NotificationsService } from './notifications/notifications.service';
 import { BlocksController } from './blocks/blocks.controller';
 import { BlocksService } from './blocks/blocks.service';
+import { AdminReportsController } from './reports/admin-reports.controller';
+import { AdminReportsService } from './reports/admin-reports.service';
 import { ReportStateService } from './reports/report-state.service';
 import { ReportsService } from './reports/reports.service';
 import { ReviewsController } from './reviews/reviews.controller';
@@ -45,7 +47,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController, AdminReportsController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -81,6 +83,7 @@ export class AppModule {
         ReviewsService,
         ReportStateService,
         ReportsService,
+        AdminReportsService,
       ],
     };
   }
