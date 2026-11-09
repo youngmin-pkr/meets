@@ -70,6 +70,15 @@ export class ProposalsService {
     return due.length;
   }
 
+  /** 신고 조치로 '기능 제한' 중이면 제안을 보내거나 수락할 수 없습니다. (채팅·열람은 허용) */
+  private async assertNotRestricted(userId: string) {
+    const r = await this.prisma.userRestriction.findFirst({
+      where: { userId, kind: 'PROPOSALS', endsAt: { gt: this.clock.now() } },
+      orderBy: { endsAt: 'desc' },
+    });
+    if (r) throw new AppError('RESTRICTED', `운영 안내에 따라 ${formatSeoulShort(r.endsAt)}까지 제안을 보내거나 수락할 수 없어요.`);
+  }
+
   /** 제안을 보내거나 받을 수 있는지: 티켓 인증, 또는 티켓이 필요 없는 행사의 '참석 예정' */
   private async gradeFor(userId: string, eventId: string) {
     const s = await this.tickets.myStatus(userId, eventId);
@@ -99,6 +108,7 @@ export class ProposalsService {
 
   async send(senderId: string, eventId: string, input: ProposalInput): Promise<ProposalView> {
     if (input.receiverId === senderId) throw new AppError('PROPOSAL_INVALID', '나에게는 제안할 수 없어요.');
+    await this.assertNotRestricted(senderId);
 
     // 1) 제안 보내기는 인증 후에만 (정리문서 2장)
     const grade = await this.gradeFor(senderId, eventId);
@@ -225,6 +235,7 @@ export class ProposalsService {
   /** 수락하면 약속이 만들어집니다. (확정 대기) */
   async accept(userId: string, id: string): Promise<AppointmentView> {
     const p = await this.mine(userId, id, 'receiver');
+    await this.assertNotRestricted(userId);
     // 받는 사람도 인증(또는 참석 예정)을 마쳐야 수락할 수 있습니다.
     if (!(await this.gradeFor(userId, p.eventId))) {
       throw new AppError('PROPOSAL_NEEDS_TICKET', '같은 행사 티켓 인증을 마친 뒤 수락할 수 있어요.');

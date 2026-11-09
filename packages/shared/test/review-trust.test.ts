@@ -138,3 +138,58 @@ describe('후보 목록: 서로 다시 가고 싶은 사람이 맨 위, 쌓인 �
     expect(withReunion[0].reunion).toBe(true);
   });
 });
+
+import {
+  notificationText as notifText,
+  REPORT_CATEGORY_LABELS,
+  REPORT_PRIORITY_ORDER,
+  REPORT_RESOLVE_ACTIONS,
+  REPORT_STATUSES,
+  REPORT_TRANSITIONS,
+  reportTransition,
+  type ReportStatus,
+} from '../src';
+
+describe('신고 상태 전이 표 (정리문서 5장)', () => {
+  const allowed: Array<[ReportStatus, ReportStatus]> = [
+    ['RECEIVED', 'QUEUED'],
+    ['QUEUED', 'IN_REVIEW'],
+    ['IN_REVIEW', 'SUSPENSION_PROPOSED'],
+    ['SUSPENSION_PROPOSED', 'CONFIRMED'],
+    ['IN_REVIEW', 'CLOSED'],
+    ['SUSPENSION_PROPOSED', 'IN_REVIEW'],
+    ['CONFIRMED', 'CLOSED'],
+  ];
+  test.each(REPORT_STATUSES.flatMap((a) => REPORT_STATUSES.map((b) => [a, b] as const)))('%s → %s', (from, to) => {
+    expect(reportTransition(from, to) !== null).toBe(allowed.some(([x, y]) => x === from && y === to));
+  });
+
+  test('두 명 확인이 필요한 전이는 정지 확정뿐이다', () => {
+    expect(REPORT_TRANSITIONS.filter((t) => t.twoPerson).map((t) => `${t.from}>${t.to}`)).toEqual(['SUSPENSION_PROPOSED>CONFIRMED']);
+  });
+});
+
+describe('신고 분류·조치·알림 글', () => {
+  test('처리 순서는 도움 요청 > 청소년 > 일반이고, 시스템 분류에도 이름이 있다', () => {
+    expect(REPORT_PRIORITY_ORDER).toEqual(['HELP', 'TEEN', 'GENERAL']);
+    expect(REPORT_CATEGORY_LABELS.NO_SHOW).toContain('안 나왔어요');
+    expect(REPORT_CATEGORY_LABELS.STALKING).toBe('계속 연락하거나 따라다녔어요');
+  });
+
+  test("'조치 없음'만 사실 확인이 아니고, 나머지는 사실로 확인한 것으로 센다", () => {
+    expect(Object.entries(REPORT_RESOLVE_ACTIONS).map(([k, v]) => [k, v.upheld])).toEqual([
+      ['NO_ACTION', false],
+      ['RECORD_ONLY', true],
+      ['WARN', true],
+      ['RESTRICT', true],
+    ]);
+  });
+
+  test('운영 알림은 정해진 문장만 쓰고 신고 사유 원문이나 신고한 사람 정보가 없다', () => {
+    const warn = notifText('ADMIN_WARNING', { nickname: '신고자닉네임', reason: '비밀 사유' });
+    expect(warn.body).not.toMatch(/신고자닉네임|비밀 사유/);
+    expect(notifText('ADMIN_RESTRICTION', { until: '11.16 (월) 12:00' }).body).toContain('11.16 (월) 12:00까지 제안 보내기와 수락이 제한돼요');
+    expect(notifText('REPORT_RESULT', { upheld: true }).body).toContain('필요한 조치를 했어요');
+    expect(notifText('REPORT_RESULT', { upheld: false }).body).toContain('조치할 내용을 찾지 못했어요');
+  });
+});

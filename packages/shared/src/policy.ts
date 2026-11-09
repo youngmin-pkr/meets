@@ -92,6 +92,10 @@ export const POLICY_DEFAULTS = {
   TRUST_DOWN_COUNT: 2,
   /** 신고 '자세한 내용' 최대 글자 수 */
   REPORT_DETAIL_MAX_LENGTH: 1000,
+  /** 신고 조치 '기능 제한' 기간(일): 제안 보내기·수락만 막고 채팅·열람은 허용 (2026-11-09 사용자 확인) */
+  REPORT_RESTRICT_DAYS: 7,
+  /** 운영자가 열람·조치 사유로 적어야 하는 최소 글자 수 (사유 없이 열람하는 것을 막음) */
+  ADMIN_REASON_MIN_LENGTH: 5,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;
