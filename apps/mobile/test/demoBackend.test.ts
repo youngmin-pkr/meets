@@ -1083,3 +1083,79 @@ describe('데모: 즉석 동행 (지금 갈래요)', () => {
     expect(await backend.getInstantEvents()).toEqual([]);
   });
 });
+
+describe('데모: 즉석 제안과 즉석 약속', () => {
+  async function ready() {
+    let clock = new Date('2026-11-07T03:00:00Z'); // 한국 시간 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity('fake:ip1:2000-01-01:F', ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모제안', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const tick = (sec: number) => {
+      clock = new Date(clock.getTime() + sec * 1000);
+    };
+    const today = (await backend.getInstantEvents())[0];
+    await backend.turnOnInstant(today.event.id, { tempoAnswers: [2, 2, 2], immersionAnswers: [2, 2] });
+    tick(10);
+    await backend.getInstantStatus(today.event.id); // 후보가 열림
+    const cands = await backend.getInstantCandidates(today.event.id);
+    const ev = await backend.getEvent(today.event.id);
+    const input = { receiverId: cands.candidates[0].userId, meetingSpotId: ev.meetingSpots[0].id, minutes: 60 as const };
+    return { backend, tick, today, input, ev };
+  }
+
+  test('후보에게 10분짜리 제안을 보내고, 예시 사용자가 수락하면 바로 확정된 약속이 생긴다', async () => {
+    const { backend, tick, today, input } = await ready();
+    const p = await backend.sendInstantProposal(today.event.id, input);
+    expect(p).toMatchObject({ status: 'SENT', instant: { minutes: 60 }, direction: 'SENT' });
+    await expect(backend.sendInstantProposal(today.event.id, input)).rejects.toMatchObject({ code: 'PROPOSAL_EXISTS' });
+    tick(2);
+    const list = await backend.listProposals();
+    expect(list.find((x) => x.id === p.id)?.status).toBe('ACCEPTED');
+    const appt = (await backend.listAppointments()).find((a) => a.instant)!;
+    expect(appt).toMatchObject({ status: 'CONFIRMED', instant: true, confirm: { mine: true, theirs: true } });
+    expect(new Date(appt.startsAt).getTime() - new Date('2026-11-07T03:00:10Z').getTime()).toBeGreaterThanOrEqual(14 * 60 * 1000);
+    expect(new Date(appt.endsAt).getTime() - new Date(appt.startsAt).getTime()).toBe(60 * 60 * 1000);
+    // 두 사람 모두 후보 풀에서 빠진다
+    expect((await backend.getInstantStatus(today.event.id)).mine.active).toBe(false);
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).toContain('PROPOSAL_ACCEPTED');
+  });
+
+  test('수락 후 10분 안에 취소하면 영향이 없고, 지나면 임박 취소다', async () => {
+    const a1 = await ready();
+    await a1.backend.sendInstantProposal(a1.today.event.id, a1.input);
+    a1.tick(2);
+    const appt = (await a1.backend.listAppointments()).find((a) => a.instant)!;
+    // 수락한 순간(12:00:12)부터 10분
+    expect(new Date(appt.freeCancelUntil).toISOString()).toBe('2026-11-07T03:10:12.000Z');
+    a1.tick(11 * 60);
+    const late = await a1.backend.cancelAppointment(appt.id);
+    expect(late.end).toMatchObject({ reason: 'CANCELLED', byMe: true, late: true });
+    const b = await ready();
+    await b.backend.sendInstantProposal(b.today.event.id, b.input);
+    b.tick(2);
+    const appt2 = (await b.backend.listAppointments()).find((a) => a.instant)!;
+    b.tick(60);
+    expect((await b.backend.cancelAppointment(appt2.id)).end).toMatchObject({ late: false });
+  });
+
+  test('잘못된 시간·장소·후보가 아닌 사람·시간이 부족한 때는 거절한다', async () => {
+    const { backend, today, input } = await ready();
+    await expect(backend.sendInstantProposal(today.event.id, { ...input, minutes: 45 as never })).rejects.toMatchObject({ code: 'PROPOSAL_INVALID' });
+    await expect(backend.sendInstantProposal(today.event.id, { ...input, meetingSpotId: 'nope' })).rejects.toMatchObject({ code: 'PROPOSAL_INVALID' });
+    await expect(backend.sendInstantProposal(today.event.id, { ...input, receiverId: 'demo-sample-nobody' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(backend.sendInstantProposal(today.event.id, { ...input, receiverId: 'x' })).rejects.toBeDefined();
+  });
+
+  test('10분이 지나면 제안이 만료된다', async () => {
+    const { backend, tick, today, input } = await ready();
+    const p = await backend.sendInstantProposal(today.event.id, { ...input });
+    expect(new Date(p.expiresAt).toISOString()).toBe('2026-11-07T03:10:10.000Z'); // 보낸 때부터 10분
+    // 예시 사용자는 1초 뒤 수락하므로 수락이 먼저 처리됩니다.
+    tick(1);
+    expect((await backend.listProposals()).find((x) => x.id === p.id)?.status).toBe('ACCEPTED');
+  });
+});

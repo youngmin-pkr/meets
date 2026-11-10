@@ -21,6 +21,9 @@ import { api } from '../api';
 import { colors } from '../theme';
 import { Body, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
 
+/** 구간 글자: 즉석 제안은 '지금부터 N분' */
+export const segmentsText = (p: ProposalView) => (p.instant ? `지금부터 ${p.instant.minutes}분` : p.segments.map((s) => `${s.label} ${s.startTime}–${s.endTime}`).join(', ') || '행사 시간 중');
+
 export const dateText = (iso: string) => {
   const { month, day, weekday } = describeEventDate(iso);
   return `${month}.${day} (${weekday})`;
@@ -95,7 +98,7 @@ export function ProposalsScreen(props: { onBack: () => void; onAccepted: (a: App
           </View>
           <Row label="행사" text={p.event.name} />
           <Row label="날짜" text={dateText(p.day.date)} />
-          <Row label="구간" text={p.segments.map((s) => `${s.label} ${s.startTime}–${s.endTime}`).join(', ') || '행사 시간 중'} />
+          <Row label="구간" text={segmentsText(p)} />
           <Row label="장소" text={p.meetingSpot.name} />
           {p.status === 'SENT' && p.direction === 'RECEIVED' ? (
             <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -236,18 +239,18 @@ export function ProposalSentScreen(props: { proposal: ProposalView; onDone: () =
     <Page
       footer={
         <>
-          <PrimaryButton label="후보 더 보기" onPress={props.onDone} />
+          <PrimaryButton label={p.instant ? '지금 갈래요로 돌아가기' : '후보 더 보기'} onPress={props.onDone} />
           <TextButton label="홈으로" onPress={props.onHome} />
         </>
       }
     >
       <TopBar label="제안" />
       <Title>{p.status === 'DRAFT' ? '일행에게 동의를 요청했어요' : '제안을 보냈어요'}</Title>
-      <Body>{p.status === 'DRAFT' ? `일행이 모두 동의하면 ${p.counterpart.nickname}님에게 제안이 나가요. 동의가 모이지 않으면 ${describeRemaining(p.expiresAt, new Date())} 뒤 자동으로 사라져요.` : `${p.counterpart.nickname}님이 수락하면 약속이 만들어져요. ${describeRemaining(p.expiresAt, new Date())} 안에 답이 없으면 자동으로 만료돼요.`}</Body>
+      <Body>{p.status === 'DRAFT' ? `일행이 모두 동의하면 ${p.counterpart.nickname}님에게 제안이 나가요. 동의가 모이지 않으면 ${describeRemaining(p.expiresAt, new Date())} 뒤 자동으로 사라져요.` : p.instant ? `${p.counterpart.nickname}님이 수락하면 바로 만나요. ${describeRemaining(p.expiresAt, new Date())} 안에 답이 없으면 자동으로 만료돼요.` : `${p.counterpart.nickname}님이 수락하면 약속이 만들어져요. ${describeRemaining(p.expiresAt, new Date())} 안에 답이 없으면 자동으로 만료돼요.`}</Body>
       <View style={{ gap: 10, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
         <Row label="행사" text={p.event.name} />
         <Row label="날짜" text={dateText(p.day.date)} />
-        <Row label="구간" text={p.segments.map((s) => `${s.label} ${s.startTime}–${s.endTime}`).join(', ') || '행사 시간 중'} />
+        <Row label="구간" text={segmentsText(p)} />
         <Row label="장소" text={p.meetingSpot.name} />
       </View>
     </Page>

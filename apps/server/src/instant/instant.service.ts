@@ -35,6 +35,7 @@ import {
 import { blockedWith } from '../blocks/block-queries';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
+import type { Prisma } from '../generated/prisma/client';
 import { MatchingService } from '../matching/matching.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
@@ -249,6 +250,34 @@ export class InstantService {
     return this.status(userId, eventId);
   }
 
+  // ───────────── 제안·수락에서 쓰는 확인 (10-2단계) ─────────────
+
+  /** 지금 이 행사에서 즉석 동행을 켜 둔 상태인지 */
+  async isActive(userId: string, eventId: string): Promise<boolean> {
+    return !!(await this.myPresence(userId, eventId));
+  }
+
+  /** 두 사람이 모두 이 행사에서 켜 둔 상태이고, 쓸 수 있는 사람이며, 서로 차단하지 않았는지 (수락할 때 다시 확인) */
+  async pairStillValid(aId: string, bId: string, eventId: string): Promise<boolean> {
+    const [a, b] = await Promise.all([this.isActive(aId, eventId), this.isActive(bId, eventId)]);
+    if (!a || !b) return false;
+    if (!(await this.allowed(aId)) || !(await this.allowed(bId))) return false;
+    return !(await blockedWith(this.prisma, aId)).has(bId);
+  }
+
+  /** 오늘의 행사 날(약속에 저장할 날). 즉석 동행을 쓸 수 있는 때가 아니면 null */
+  async todayDay(eventId: string) {
+    const event = await this.loadEvent(eventId);
+    const p = await this.instantPolicy();
+    const a = instantWindowNow(event.days, this.clock.now(), p);
+    return a.ok ? { day: a.day, policy: p } : null;
+  }
+
+  /** 즉석 약속이 만들어지면 두 사람 모두 더 이상 후보 풀에 있지 않습니다. */
+  async turnOffMany(tx: Prisma.TransactionClient, userIds: string[], eventId: string) {
+    await tx.instantPresence.updateMany({ where: { userId: { in: userIds }, eventId, endedAt: null }, data: { endedAt: this.clock.now(), waitingSince: null } });
+  }
+
   // ───────────── 후보 ─────────────
 
   private async context(userId: string, eventId: string) {
@@ -301,7 +330,8 @@ export class InstantService {
 
   async candidateDetail(userId: string, eventId: string, candidateId: string): Promise<CandidateDetail> {
     const { p, a, waiting, viewer, profiles, users } = await this.pool(userId, eventId);
-    if (!waiting.open || !viewer) throw new AppError('NOT_FOUND', '후보를 찾을 수 없어요.');
+    if (!waiting.open) throw new AppError('INSTANT_NOT_NOW', `지금 만날 수 있는 사람이 ${p.minWaiting}명이 되면 후보를 볼 수 있어요.`, { count: waiting.count, min: waiting.min });
+    if (!viewer) throw new AppError('INSTANT_NEEDS_STYLE', '간단한 질문에 먼저 답해 주세요.');
     const base = await this.matching.matchPolicy();
     const result = matchCandidates(viewer, profiles, [instantMatchDay(a.day)], instantMatchPolicy(base, p), { shortTime: true, immersionPlus: true });
     const c = result.candidates.find((x) => x.userId === candidateId);

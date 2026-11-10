@@ -25,6 +25,10 @@ import {
   canRequestHelp,
   combineProfiles,
   hmOf,
+  instantSchedule,
+  INSTANT_DURATIONS,
+  type InstantProposalInput,
+  type InstantSchedule,
   INSTANT_CLOSED_MESSAGES,
   instantMatchDay,
   instantMatchPolicy,
@@ -240,6 +244,8 @@ interface DemoProposal {
   autoAcceptAt: number | null;
   /** 일행이 보낸(보내려는) 제안이면 그 일행 */
   partyId: string | null;
+  /** 즉석 제안이면 만나는 시간(분) */
+  instantMinutes: number | null;
   /** 일행 제안 초안: 만든 사람을 뺀 일행원별 동의. 예시 친구는 잠시 뒤 자동으로 동의합니다. */
   consents: Record<string, boolean>;
   /** 데모 전용: 예시 친구가 동의하는 시각 */
@@ -277,6 +283,10 @@ interface DemoAppointment {
   rescheduleDeadline: Date | null;
   /** 데모 전용: 전날 확인을 바로 열어 둔 예시 약속 */
   confirmOpensAt: Date | null;
+  /** 즉석 동행으로 만든 약속 (수락하는 순간 확정) */
+  instant: boolean;
+  /** 데모 전용: 가입하면 넣어 두는 '지금 만나는 중' 예시 약속. 즉석 동행을 해 볼 수 있도록 시간 겹침 검사에서는 뺍니다. */
+  demoSeed?: boolean;
   endReason: AppointmentEndReason | null;
   cancelledBy: string | null;
   cancelReason: CancelReason | null;
@@ -477,7 +487,10 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       }
       if (p.status !== 'SENT') continue;
       if (p.expiresAt.getTime() <= t) p.status = 'EXPIRED';
-      else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) {
+      else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t && p.instantMinutes) {
+        // 즉석 제안: 그사이 상대가 끄거나 시간이 안 되면 거절한 것으로 보입니다.
+        if (!acceptInstantInternal(p)) p.status = 'REJECTED';
+      } else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) {
         const { day } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
         const segs = day.segments.filter((x) => p.segmentIds.includes(x.id));
         const w = appointmentWindow(day, segs);
@@ -984,10 +997,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   }
 
   /** 이 사람의 진행 중인 약속 중 시간이 겹치는 것 */
-  function overlapFor(userId: string, range: TimeRange, excludeId?: string) {
+  function overlapFor(userId: string, range: TimeRange, excludeId?: string, ignoreSeed = false) {
     return appointments.find(
       (a) =>
         a.id !== excludeId &&
+        !(ignoreSeed && a.demoSeed) &&
         a.users.includes(userId) &&
         ACTIVE_APPOINTMENT_STATUSES.includes(a.status) &&
         rangesOverlap(rangeOf(a.date, a.startTime, a.endTime), range),
@@ -1014,6 +1028,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       policy: DEMO_APPOINTMENT_POLICY,
       rescheduleDeadline: null,
       confirmOpensAt: options.confirmOpensAt ?? null,
+      instant: false,
       endReason: null,
       cancelledBy: null,
       cancelReason: null,
@@ -1034,6 +1049,68 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     const sample = a.users.find(isSample);
     if (sample) addMessage(a, sample, 'TEXT', SAMPLE_GREETING);
     notify(p.senderId, 'PROPOSAL_ACCEPTED', { nickname: nicknameOf(p.receiverId), eventName: eventName(p.eventId) }, { appointmentId: a.id });
+    return a;
+  }
+
+  const instantScheduleParams = () => ({
+    startDelayMinutes: POLICY_DEFAULTS.INSTANT_START_DELAY_MINUTES,
+    freeCancelMinutes: POLICY_DEFAULTS.INSTANT_FREE_CANCEL_MINUTES,
+    endHour: POLICY_DEFAULTS.INSTANT_END_HOUR,
+    minOverlapMinutes: POLICY_DEFAULTS.INSTANT_MIN_OVERLAP_MINUTES,
+  });
+
+  /** 즉석 제안을 수락합니다. 바로 확정된 약속이 만들어지고, 두 사람 모두 후보 풀에서 빠집니다. 만들 수 없으면 null */
+  function acceptInstantInternal(p: DemoProposal): DemoAppointment | null {
+    const days = instantDaysOf(p.eventId);
+    const w = instantWindowNow(days, now(), instantPolicy);
+    if (!w.ok) return null;
+    const sched: InstantSchedule | null = instantSchedule(now(), w.day, p.instantMinutes ?? 30, instantScheduleParams());
+    if (!sched) return null;
+    const range = rangeOf(sched.date, sched.startTime, sched.endTime);
+    if (overlapFor(p.senderId, range, undefined, true) || overlapFor(p.receiverId, range, undefined, true)) return null;
+    p.status = 'ACCEPTED';
+    const spot = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId).spot;
+    const a: DemoAppointment = {
+      id: `demo-appointment-${appointments.length + 1}`,
+      proposalId: p.id,
+      eventId: p.eventId,
+      eventDayId: p.eventDayId,
+      meetingSpotId: spot.id,
+      meetingSpotName: spot.name,
+      users: [p.senderId, p.receiverId],
+      mates: [],
+      status: 'PENDING_CONFIRM',
+      date: sched.date,
+      startTime: sched.startTime,
+      endTime: sched.endTime,
+      segments: [],
+      policy: { ...DEMO_APPOINTMENT_POLICY, soonMinutes: 0, freeCancelAt: sched.freeCancelAt.toISOString() },
+      rescheduleDeadline: null,
+      confirmOpensAt: null,
+      instant: true,
+      endReason: null,
+      cancelledBy: null,
+      cancelReason: null,
+      parts: { [p.senderId]: emptyPart(), [p.receiverId]: emptyPart() },
+      createdAt: now().getTime(),
+      sampleConfirmAt: null,
+      endedAt: null,
+      chatExtended: false,
+      endedBySafety: false,
+      messages: [],
+      readSeq: {},
+      sampleReplyAt: null,
+      sampleReplies: 0,
+    };
+    appointments.push(a);
+    addMessage(a, null, 'SYSTEM', CHAT_STATUS_LINES.PENDING_CONFIRM!);
+    // 수락하는 순간 확정 (전날 확인 없음)
+    for (const u of a.users) a.parts[u].confirmedAt = now();
+    setStatus(a, 'CONFIRMED');
+    const sample = a.users.find(isSample);
+    if (sample) addMessage(a, sample, 'TEXT', '안녕하세요! 곧 봬요. 도착하면 알려 드릴게요.');
+    for (const u of a.users) instantOn.delete(`${u}|${p.eventId}`);
+    notify(p.senderId, 'PROPOSAL_ACCEPTED', { nickname: nicknameOf(p.receiverId), eventName: eventName(p.eventId), when: sched.startTime, spotName: spot.name }, { appointmentId: a.id });
     return a;
   }
 
@@ -1132,6 +1209,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
             }
           : null,
       canCancel: (p.status === 'DRAFT' || p.status === 'SENT') && (p.senderId === me || isPartyMember(p, me)),
+      instant: p.instantMinutes ? { minutes: p.instantMinutes } : null,
     };
   }
 
@@ -1163,6 +1241,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     return {
       id: a.id,
       status: a.status,
+      instant: a.instant,
       counterpart: counterpartOf(other),
       companions: [
         { ...counterpartOf(other), sameSide: false, confirmed: !!theirs.confirmedAt, arrivedAt: theirs.arrivedAt?.toISOString() ?? null },
@@ -1294,6 +1373,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       policy: DEMO_APPOINTMENT_POLICY,
       rescheduleDeadline: null,
       confirmOpensAt: null,
+      instant: false,
       endReason: null,
       cancelledBy: null,
       cancelReason: null,
@@ -1344,6 +1424,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
       autoAcceptAt: null,
       partyId: null,
+      instantMinutes: null,
       consents: {},
       consentAt: null,
     };
@@ -1376,6 +1457,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
       autoAcceptAt: null,
       partyId: null,
+      instantMinutes: null,
       consents: {},
       consentAt: null,
     };
@@ -1394,6 +1476,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     a.endTime = hhmm(endAt);
     a.segments = [{ id: 'demo-segment-now', label: '같이 둘러보기', startTime: a.startTime, endTime: a.endTime }];
     a.status = 'IN_PROGRESS';
+    a.demoSeed = true;
     for (const u of a.users) {
       a.parts[u].confirmedAt = now();
       a.parts[u].arrivedAt = start;
@@ -1427,6 +1510,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       createdAt: now().getTime(),
       autoAcceptAt: isSample(receiverId) ? now().getTime() + autoAcceptDelayMs : null,
       partyId: null,
+      instantMinutes: null,
       consents: {},
       consentAt: null,
     };
@@ -1950,6 +2034,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       const p = proposals.find((x) => x.id === id && x.receiverId === user.id && x.status !== 'DRAFT');
       if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
       if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', p.status === 'EXPIRED' ? '답할 수 있는 시간이 지났어요.' : '이미 처리된 제안이에요.');
+      if (p.instantMinutes) {
+        const made = acceptInstantInternal(p);
+        if (!made) throw new ApiError('PROPOSAL_INVALID', '그사이 상대가 자리를 비웠거나 시간이 지나 이 제안은 수락할 수 없어요.');
+        return delay(appointmentView(made, user.id));
+      }
       if (!gradeOf(user.id, p.eventId)) throw new ApiError('PROPOSAL_NEEDS_TICKET', '같은 행사 티켓 인증을 마친 뒤 수락할 수 있어요.');
       const party = p.partyId ? parties.find((x) => x.id === p.partyId) : undefined;
       const still = party ? partyCandidateFor(party, user.id) : candidateFor(p.senderId, p.eventId, user.id);
@@ -2247,6 +2336,48 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       return delay({ total: cards.length, immersionRelaxed: result.immersionRelaxed, candidates: cards, widen: null });
     },
 
+    async sendInstantProposal(eventId, input: InstantProposalInput) {
+      const user = currentUser();
+      settle();
+      if (input.receiverId === user.id) throw new ApiError('PROPOSAL_INVALID', '나에게는 제안할 수 없어요.');
+      if (!INSTANT_DURATIONS.includes(input.minutes)) throw new ApiError('PROPOSAL_INVALID', '30분이나 60분 중에서 골라 주세요.', { field: 'minutes' });
+      const { a, viewer, others, waiting } = instantPool(user, eventId);
+      if (!waiting.open) throw new ApiError('INSTANT_NOT_NOW', `지금 만날 수 있는 사람이 ${waiting.min}명이 되면 후보를 볼 수 있어요.`);
+      const found = matchCandidates(viewer, others, [instantMatchDay(a.day)], instantMatchPolicy(POLICY, instantPolicy), { shortTime: true, immersionPlus: true }).candidates.find(
+        (c) => c.userId === input.receiverId,
+      );
+      if (!found) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const { event } = visibleEvent(eventId);
+      if (!event.meetingSpots.some((m) => m.id === input.meetingSpotId)) throw new ApiError('PROPOSAL_INVALID', '공개된 만날 장소를 골라 주세요.', { field: 'meetingSpotId' });
+      const sched = instantSchedule(now(), a.day, input.minutes, instantScheduleParams());
+      if (!sched) throw new ApiError('PROPOSAL_TOO_LATE', '행사 시간이 얼마 남지 않아 지금은 제안할 수 없어요.');
+      if (proposals.some((x) => x.status === 'SENT' && x.senderId === user.id && x.instantMinutes)) {
+        throw new ApiError('PROPOSAL_EXISTS', '답을 기다리는 즉석 제안이 있어요. 답이 오거나 만료되면 새로 보낼 수 있어요.');
+      }
+      if (overlapFor(user.id, rangeOf(sched.date, sched.startTime, sched.endTime), undefined, true)) throw new ApiError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+      const expiresAt = new Date(now().getTime() + POLICY_DEFAULTS.INSTANT_PROPOSAL_EXPIRE_MINUTES * 60 * 1000);
+      const p: DemoProposal = {
+        id: `demo-proposal-${++proposalSeq}`,
+        senderId: user.id,
+        receiverId: input.receiverId,
+        eventId,
+        eventDayId: a.day.id,
+        segmentIds: [],
+        meetingSpotId: input.meetingSpotId,
+        status: 'SENT',
+        expiresAt,
+        createdAt: now().getTime(),
+        autoAcceptAt: isSample(input.receiverId) ? now().getTime() + autoAcceptDelayMs : null,
+        partyId: null,
+        instantMinutes: input.minutes,
+        consents: {},
+        consentAt: null,
+      };
+      proposals.push(p);
+      notify(input.receiverId, 'PROPOSAL_RECEIVED', { nickname: nicknameOf(user.id), eventName: eventName(eventId), deadline: hmOf(expiresAt) }, { proposalId: p.id });
+      return delay(proposalView(p, user.id));
+    },
+
     async getInstantCandidate(eventId, userId) {
       const user = currentUser();
       const { a, viewer, others, waiting } = instantPool(user, eventId);
@@ -2297,6 +2428,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         createdAt: now().getTime(),
         autoAcceptAt: null,
         partyId: p.id,
+        instantMinutes: null,
         consents: Object.fromEntries(others.map((id) => [id, false])),
         // 데모 전용: 예시 친구는 잠시 뒤 동의합니다.
         consentAt: others.some(isSample) ? now().getTime() + autoAcceptDelayMs : null,

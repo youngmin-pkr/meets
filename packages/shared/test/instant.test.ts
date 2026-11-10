@@ -2,7 +2,10 @@
  * 즉석 동행: 쓸 수 있는 때, 시간대, 대기 인원 기준, 후보 매칭 (정리문서 정책 값 1·3·18)
  */
 import {
+  freeCancelUntil,
   hmOf,
+  INSTANT_DURATIONS,
+  instantSchedule,
   instantMatchDay,
   instantMatchPolicy,
   instantProfileDay,
@@ -149,5 +152,39 @@ describe('후보 매칭 (일반 매칭 규칙 그대로, 겹침만 30분)', () =
     const me = person({ tempo: 1 });
     expect(run(me, [person({ tempo: 3 })]).candidates).toHaveLength(0);
     expect(run(me, [me]).candidates).toHaveLength(0);
+  });
+});
+
+describe('즉석 약속 시간 (수락하는 순간 정해짐)', () => {
+  const sp = { startDelayMinutes: POLICY_DEFAULTS.INSTANT_START_DELAY_MINUTES, freeCancelMinutes: POLICY_DEFAULTS.INSTANT_FREE_CANCEL_MINUTES, endHour: P.endHour, minOverlapMinutes: P.minOverlapMinutes };
+
+  test('문서·제안 값', () => {
+    expect([POLICY_DEFAULTS.INSTANT_PROPOSAL_EXPIRE_MINUTES, sp.startDelayMinutes, sp.freeCancelMinutes]).toEqual([10, 15, 10]);
+    expect(INSTANT_DURATIONS).toEqual([30, 60]);
+  });
+
+  test('수락한 15분 뒤에 시작해서 고른 시간만큼 만난다. 취소는 수락 후 10분까지 영향 없음', () => {
+    const s = instantSchedule(kst('2026-12-12T16:00:30'), day, 60, sp)!;
+    expect(s).toMatchObject({ date: '2026-12-12', startTime: '16:16', endTime: '17:16' });
+    expect(s.freeCancelAt.toISOString()).toBe(kst('2026-12-12T16:10:30').toISOString());
+    expect(instantSchedule(kst('2026-12-12T16:00:00'), day, 30, sp)).toMatchObject({ startTime: '16:15', endTime: '16:45' });
+  });
+
+  test('행사 끝·22시를 넘지 않고, 남는 시간이 30분보다 짧으면 만날 수 없다', () => {
+    expect(instantSchedule(kst('2026-12-12T20:00:00'), day, 60, sp)).toMatchObject({ startTime: '20:15', endTime: '21:00' });
+    expect(instantSchedule(kst('2026-12-12T20:30:00'), day, 60, sp)).toBeNull(); // 20:45~21:00 = 15분
+    const late = { ...day, endTime: '23:30' };
+    expect(instantSchedule(kst('2026-12-12T21:00:00'), late, 60, sp)).toMatchObject({ startTime: '21:15', endTime: '22:00' });
+    expect(instantSchedule(kst('2026-12-12T21:20:00'), late, 60, sp)).toBeNull();
+  });
+
+  test('자정을 넘기는 시간은 만들지 않는다', () => {
+    expect(instantSchedule(kst('2026-12-12T23:50:00'), { ...day, endTime: '23:59' }, 30, { ...sp, endHour: 24 })).toBeNull();
+  });
+
+  test('즉석 약속은 취소 기한이 따로 정해져 있다', () => {
+    const pol = { dayBeforeHour: 18, confirmDeadlineHours: 3, confirmReminderHours: 3, freeCancelHours: 24, noShowWaitMinutes: 15, soonMinutes: 0, arrivalOpenMinutes: 60 };
+    expect(freeCancelUntil('2026-12-12', '16:15', pol).toISOString()).toBe(kst('2026-12-11T16:15:00').toISOString());
+    expect(freeCancelUntil('2026-12-12', '16:15', { ...pol, freeCancelAt: '2026-12-12T07:10:00.000Z' }).toISOString()).toBe('2026-12-12T07:10:00.000Z');
   });
 });

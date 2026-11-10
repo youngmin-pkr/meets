@@ -65,6 +65,8 @@ export interface AppointmentPolicy {
   noShowWaitMinutes: number;
   soonMinutes: number;
   arrivalOpenMinutes: number;
+  /** 즉석 약속처럼 취소 기한이 약속 시각이 아니라 따로 정해진 경우 그 시각(ISO). 있으면 freeCancelHours보다 먼저 씁니다. */
+  freeCancelAt?: string;
 }
 
 export const APPOINTMENT_POLICY_KEYS = [
@@ -142,6 +144,7 @@ export function confirmSchedule(date: string, startTime: string, policy: Appoint
 
 /** 이 시각 이후 취소는 '임박 취소' */
 export function freeCancelUntil(date: string, startTime: string, policy: AppointmentPolicy): Date {
+  if (policy.freeCancelAt) return new Date(policy.freeCancelAt);
   return new Date(seoulDateTime(date, startTime).getTime() - policy.freeCancelHours * HOUR);
 }
 
@@ -318,6 +321,8 @@ export function groupName(names: string[]): string {
 export interface AppointmentView {
   id: string;
   status: AppointmentStatus;
+  /** 즉석 동행으로 만든 약속 (수락하는 순간 확정, 전날 확인 없음) */
+  instant: boolean;
   /** 1:1이면 상대, 여러 명이 만나면 첫 번째 상대 */
   counterpart: Counterpart;
   /** 나를 뺀 함께하는 사람들 (1:1이면 상대 한 명) */
