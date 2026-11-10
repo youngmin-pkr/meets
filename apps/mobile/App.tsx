@@ -24,7 +24,7 @@ import {
 import { api, setSessionToken, type Me, type SignupConfig } from './src/api';
 import { screenAfterIdentity, screenForStep, type Screen } from './src/signupFlow';
 import { colors } from './src/theme';
-import { Body, Page, PrimaryButton, Title } from './src/ui';
+import { Body, Page, PrimaryButton, SwipeNav, Title } from './src/ui';
 import {
   AccountUnavailableScreen,
   TeenNotYetScreen,
@@ -189,6 +189,27 @@ export default function App() {
     setScreen('REPORT');
   }
 
+  /** 채팅방에서 나가기 (위쪽 버튼과 '오른쪽으로 밀기'가 같이 씁니다) */
+  async function leaveChat() {
+    // 약속 화면에서 왔으면 최신 약속으로 돌아갑니다.
+    if (chatBack === 'APPOINTMENT' && chatId) {
+      const fresh = await api.getAppointment(chatId).catch(() => null);
+      if (fresh) setAppointment(fresh);
+    }
+    setScreen(chatBack);
+  }
+
+  /** 아래 메뉴 4개의 순서. 화면을 옆으로 밀면 이 순서대로 넘어갑니다. */
+  const tabOrder: Tab[] = ['HOME', 'EVENTS', 'CHATS', 'ME'];
+  const tabIndex = tabOrder.indexOf(screen as Tab);
+  const swipeLeft = tabIndex >= 0 && tabIndex < tabOrder.length - 1 ? () => goTab(tabOrder[tabIndex + 1]) : undefined;
+  const swipeRight =
+    screen === 'CHAT'
+      ? () => void leaveChat()
+      : tabIndex > 0
+        ? () => goTab(tabOrder[tabIndex - 1])
+        : undefined;
+
   function openChat(appointmentId: string, from: Screen) {
     setChatId(appointmentId);
     setChatBack(from);
@@ -309,6 +330,7 @@ export default function App() {
     <View style={{ flex: 1, backgroundColor: colors.border }}>
       <View style={[{ flex: 1, width: '100%', backgroundColor: colors.background }, webPhoneWidth]}>
         <StatusBar style="dark" />
+        <SwipeNav onSwipeLeft={swipeLeft} onSwipeRight={swipeRight}>
         {screen === 'WELCOME' && (
           <WelcomeScreen
             onStart={() => {
@@ -396,14 +418,7 @@ export default function App() {
           <ChatScreen
             key={chatId}
             appointmentId={chatId}
-            onBack={async () => {
-              // 약속 화면에서 왔으면 최신 약속으로 돌아갑니다.
-              if (chatBack === 'APPOINTMENT') {
-                const fresh = await api.getAppointment(chatId).catch(() => null);
-                if (fresh) setAppointment(fresh);
-              }
-              setScreen(chatBack);
-            }}
+            onBack={leaveChat}
             onRules={() => setScreen('CHAT_RULES')}
           />
         )}
@@ -692,6 +707,7 @@ export default function App() {
         {screen === 'EVENT_REPORTED' && reported && (
           <EventReportedScreen input={reported.input} result={reported.result} onDone={() => setScreen('EVENTS')} />
         )}
+        </SwipeNav>
       </View>
     </View>
   );
