@@ -21,6 +21,7 @@ export type Screen =
   | 'PROPOSAL_SENT'
   | 'APPOINTMENT'
   | 'APPOINTMENT_CANCEL'
+  | 'SAFETY_SETTINGS'
   /** 알림함 */
   | 'NOTIFICATIONS'
   /** 앱 안 채팅 */

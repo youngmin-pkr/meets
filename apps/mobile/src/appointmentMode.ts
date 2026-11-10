@@ -71,6 +71,10 @@ function closedHeadline(a: AppointmentView): { title: string; body: string } {
   const end = a.end;
   switch (end?.reason) {
     case 'CANCELLED':
+      if (end.byMe && a.status === 'ENDED_EARLY') {
+        // 만남 중에 내가 끝낸 경우(도움 요청, 차단)
+        return { title: '만남을 끝냈어요', body: '내 신뢰 단계에는 영향이 없어요.' };
+      }
       if (end.byMe) {
         return {
           title: '약속을 취소했어요',
