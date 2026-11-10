@@ -502,12 +502,22 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     // 데모 전용: 일행을 만들면 잠시 뒤 예시 친구가 합류합니다.
     if (p.sampleJoinAt !== null && p.sampleJoinAt <= t && now() < p.inviteExpiresAt && JOINABLE_PARTY_STATUSES.includes(p.status) && activeMembers(p).length < partySize.maxSize) {
       p.sampleJoinAt = null;
-      const friend = SAMPLE_PEOPLE.map((x) => `demo-sample-${x.key}`).find(
+      const free = SAMPLE_PEOPLE.map((x) => `demo-sample-${x.key}`).filter(
         (id) =>
           partyReady(id, p.eventId) &&
           !parties.some((o) => o.eventId === p.eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === id)) &&
           !activeMembers(p).some((m) => isBlockedBetween(id, m.userId)),
       );
+      // 일행 후보가 남도록, 리더의 후보가 아닌 사람을 먼저 친구로 고릅니다. (후보가 한 명뿐인 행사에서 그 사람이 친구가 되면 후보가 없어져 버림)
+      const leaderCandidates = (() => {
+        try {
+          const { days, all, viewer } = matchContext(p.eventId, p.leaderId);
+          return new Set(matchCandidates(viewer, all, days, POLICY, { shortTime: true, immersionPlus: true }).candidates.map((c) => c.userId));
+        } catch {
+          return new Set<string>();
+        }
+      })();
+      const friend = free.find((id) => !leaderCandidates.has(id)) ?? free[0];
       if (friend) {
         p.members.push({ userId: friend, joinedAt: now(), active: true, remindedAt: null });
         for (const m of activeMembers(p)) notify(m.userId, 'PARTY_JOINED', { nickname: nicknameOf(friend), eventName: eventName(p.eventId) });
@@ -1416,8 +1426,8 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     };
   }
 
-  function matchContext(eventId: string) {
-    const user = currentUser();
+  function matchContext(eventId: string, forUserId?: string) {
+    const user = forUserId ? users.find((u) => u.id === forUserId)! : currentUser();
     const { days } = visibleEvent(eventId);
     const all = profilesFor(user.id, eventId);
     const viewer = all.find((p) => p.userId === user.id);
