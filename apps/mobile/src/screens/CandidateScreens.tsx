@@ -80,7 +80,7 @@ function GradeBadge({ grade }: { grade: AttendanceGrade | null }) {
   );
 }
 
-function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCard; multiDay: boolean; onPress: () => void; highlight: boolean }) {
+export function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCard; multiDay: boolean; onPress: () => void; highlight: boolean }) {
   const best = [...c.overlaps].sort((a, b) => b.minutes - a.minutes)[0];
   return (
     <Pressable
@@ -129,6 +129,8 @@ export function CandidatesScreen(props: {
   onOpen: (c: CandidateCard) => void;
   onOtherDay: () => void;
   onWait: () => void;
+  /** 친구와 같이 가는 경우: 일행 화면으로 */
+  onParty?: () => void;
 }) {
   const { event } = props;
   const chosenDays = event.days.filter((d) => props.chosenDayIds.includes(d.id));
@@ -173,6 +175,15 @@ export function CandidatesScreen(props: {
       <Title>{data ? `함께할 후보 ${data.total}명` : '후보를 찾는 중이에요…'}</Title>
       <EventStrip event={event} dates={chosenDays.map((d) => d.date)} />
       <VerifyBanner grade={props.myGrade} pending={props.ticketPending} onVerify={props.onVerify} />
+      {props.onParty ? (
+        <Pressable onPress={props.onParty} accessibilityRole="button" style={[styles.row, { padding: 12, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.white }]}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ fontSize: 13, fontWeight: '900', color: colors.ink }}>친구와 같이 가나요?</Text>
+            <Text style={[styles.small, keepWords]}>일행을 만들면 전원이 겹치는 시간으로 후보를 찾아요.</Text>
+          </View>
+          <Text style={{ fontSize: 18, color: colors.ink }}>›</Text>
+        </Pressable>
+      ) : null}
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         <Pill label="추천순" selected={options.sort !== 'OVERLAP'} onPress={() => setOptions({ ...options, sort: 'RECOMMENDED' })} />

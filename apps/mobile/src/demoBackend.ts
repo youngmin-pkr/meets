@@ -23,6 +23,19 @@ import {
   arrivedLine,
   CHAT_STATUS_LINES,
   canRequestHelp,
+  combineProfiles,
+  isInputDone,
+  JOINABLE_PARTY_STATUSES,
+  LIVE_PARTY_STATUSES,
+  matchPartyCandidates,
+  nextPartyStatus,
+  PARTY_STATUS_LABELS,
+  partyGuide,
+  partyInviteExpiresAt,
+  passesMust,
+  type PartyInvitePreview,
+  type PartyStatus,
+  type PartyView,
   chatClosesAt,
   dueSafetySteps,
   sharedStatusOf,
@@ -260,6 +273,17 @@ interface DemoAppointment {
   sampleReplies: number;
 }
 
+interface DemoParty {
+  id: string;
+  eventId: string;
+  leaderId: string;
+  status: PartyStatus;
+  inviteExpiresAt: Date;
+  members: Array<{ userId: string; joinedAt: Date; active: boolean; remindedAt: Date | null }>;
+  /** 데모 전용: 예시 친구가 합류하는 시각 */
+  sampleJoinAt: number | null;
+}
+
 interface DemoMessage {
   id: string;
   seq: number;
@@ -362,6 +386,9 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   /** 차단: 키는 '차단한 사람>차단당한 사람' */
   const blockMap = new Map<string, { blockerId: string; blockedId: string; source: BlockSource; at: Date }>();
   const reviews: Array<{ appointmentId: string; authorId: string; targetId: string; overall: ReviewOverall; again: ReviewAgain }> = [];
+  /** 일행 */
+  const parties: DemoParty[] = [];
+  let partySeq = 0;
   /** 안전 확인 (묻고, 다시 묻고, 믿는 사람에게 알림) */
   const safetyChecks: Array<{ id: string; appointmentId: string; userId: string; seq: number; askedAt: Date; remindedAt: Date | null; answeredAt: Date | null; alertedAt: Date | null }> = [];
   /** 믿는 사람에게 보내는 링크 */
@@ -436,6 +463,142 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       }
       if (a.status === 'IN_PROGRESS') runSafetyChecks(a);
     }
+    for (const party of parties) settleParty(party, t);
+  }
+
+  // ───────────── 일행 ─────────────
+
+  const partySize = { minSize: POLICY_DEFAULTS.PARTY_MIN_SIZE, maxSize: POLICY_DEFAULTS.PARTY_MAX_SIZE };
+  const activeMembers = (p: DemoParty) => p.members.filter((m) => m.active);
+
+  /** 입력을 마쳤는지: 일정·스타일 입력과 티켓 인증(또는 참석 예정) */
+  function partyReady(userId: string, eventId: string): boolean {
+    const profile = profiles(eventId).find((x) => x.userId === userId);
+    return isInputDone({ hasPreference: !!profile, grade: profile?.grade ?? null });
+  }
+
+  function leaveParty(p: DemoParty, userId: string) {
+    const m = p.members.find((x) => x.userId === userId && x.active);
+    if (m) m.active = false;
+  }
+
+  function settleParty(p: DemoParty, t: number) {
+    if (p.status === 'DISBANDED') return;
+    // 데모 전용: 일행을 만들면 잠시 뒤 예시 친구가 합류합니다.
+    if (p.sampleJoinAt !== null && p.sampleJoinAt <= t && now() < p.inviteExpiresAt && JOINABLE_PARTY_STATUSES.includes(p.status) && activeMembers(p).length < partySize.maxSize) {
+      p.sampleJoinAt = null;
+      const friend = SAMPLE_PEOPLE.map((x) => `demo-sample-${x.key}`).find(
+        (id) =>
+          partyReady(id, p.eventId) &&
+          !parties.some((o) => o.eventId === p.eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === id)) &&
+          !activeMembers(p).some((m) => isBlockedBetween(id, m.userId)),
+      );
+      if (friend) {
+        p.members.push({ userId: friend, joinedAt: now(), active: true, remindedAt: null });
+        for (const m of activeMembers(p)) notify(m.userId, 'PARTY_JOINED', { nickname: nicknameOf(friend), eventName: eventName(p.eventId) });
+      }
+    }
+    for (let guard = 0; guard < 4; guard++) {
+      const members = activeMembers(p);
+      const eventOpen = (() => {
+        const ev = events.find((e) => e.detail.id === p.eventId);
+        const today = isoOf(todayInSeoul(now()));
+        return !!ev && ev.status === 'REGISTERED' && ev.detail.days.some((d) => d.date >= today);
+      })();
+      const next: { to: PartyStatus } | null = !eventOpen
+        ? ({ to: 'DISBANDED' } as const)
+        : nextPartyStatus(p.status, members.map((m) => ({ ready: partyReady(m.userId, p.eventId) })), partySize, now() >= p.inviteExpiresAt);
+      if (!next) {
+        if (p.status === 'CONFIRMING') {
+          for (const m of members) {
+            if (partyReady(m.userId, p.eventId) || m.remindedAt) continue;
+            if (now().getTime() >= m.joinedAt.getTime() + POLICY_DEFAULTS.PARTY_INPUT_REMIND_HOURS * 60 * 60 * 1000) {
+              m.remindedAt = now();
+              notify(m.userId, 'PARTY_INPUT_REMIND', { eventName: eventName(p.eventId) });
+            }
+          }
+        }
+        return;
+      }
+      p.status = next.to;
+      if (next.to === 'DISBANDED') {
+        for (const m of members) notify(m.userId, 'PARTY_DISBANDED', { eventName: eventName(p.eventId) });
+        for (const m of members) m.active = false;
+      } else if (next.to === 'ACTIVE') {
+        for (const m of members) notify(m.userId, 'PARTY_READY', { eventName: eventName(p.eventId) });
+      }
+    }
+  }
+
+  function partyView(p: DemoParty, me: string): PartyView {
+    const members = activeMembers(p).map((m) => {
+      const c = counterpartOf(m.userId);
+      return {
+        userId: m.userId,
+        nickname: c.nickname,
+        avatarInitial: c.avatarInitial,
+        avatarColor: c.avatarColor,
+        isMe: m.userId === me,
+        isLeader: m.userId === p.leaderId,
+        ready: partyReady(m.userId, p.eventId),
+      };
+    });
+    const isLeader = p.leaderId === me;
+    const joinable = JOINABLE_PARTY_STATUSES.includes(p.status) && now() < p.inviteExpiresAt && members.length < partySize.maxSize;
+    const notReady = members.filter((m) => !m.ready);
+    return {
+      id: p.id,
+      event: { id: p.eventId, name: eventName(p.eventId) },
+      status: p.status,
+      statusLabel: PARTY_STATUS_LABELS[p.status],
+      members,
+      minSize: partySize.minSize,
+      maxSize: partySize.maxSize,
+      invite: isLeader && joinable ? { url: `https://meets.example.com/party-invite/${p.id}.demo`, expiresAt: p.inviteExpiresAt.toISOString() } : null,
+      guide: partyGuide({ status: p.status, isLeader, notReady: notReady.filter((m) => !m.isMe).map((m) => m.nickname), meNotReady: notReady.some((m) => m.isMe), memberCount: members.length, maxSize: partySize.maxSize }),
+      actions: {
+        proceedWithout: isLeader && p.status === 'CONFIRMING' && notReady.length > 0 && members.length - notReady.length >= partySize.minSize,
+        disband: isLeader,
+        leave: true,
+        candidates: p.status === 'ACTIVE',
+      },
+    };
+  }
+
+  function myParty(id: string) {
+    const user = currentUser();
+    settle();
+    const p = parties.find((x) => x.id === id && x.status !== 'DISBANDED' && x.members.some((m) => m.active && m.userId === user.id));
+    if (!p) throw new ApiError('NOT_FOUND', '일행을 찾을 수 없어요.');
+    return { user, p };
+  }
+
+  function partyByToken(token: string) {
+    const id = token.slice(0, token.lastIndexOf('.'));
+    const p = parties.find((x) => x.id === id && x.status !== 'DISBANDED');
+    if (!p) throw new ApiError('INVITE_UNAVAILABLE', '열 수 없는 초대예요. 보낸 분께 새 링크를 부탁해 보세요.');
+    return p;
+  }
+
+  function joinProblem(userId: string, p: DemoParty): string | null {
+    if (activeMembers(p).some((m) => m.userId === userId)) return '이미 이 일행이에요.';
+    if (!JOINABLE_PARTY_STATUSES.includes(p.status)) return '이미 시작한 일행이라 합류할 수 없어요.';
+    if (now() >= p.inviteExpiresAt) return '초대 시간이 지났어요. 새 링크를 부탁해 보세요.';
+    if (activeMembers(p).length >= partySize.maxSize) return `일행은 최대 ${partySize.maxSize}명이에요.`;
+    if (parties.some((o) => o.eventId === p.eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === userId))) return '이 행사에는 이미 다른 일행이 있어요.';
+    return null;
+  }
+
+  /** 일행 후보를 찾기 위한 정보 (일행 전원의 입력이 있어야 함) */
+  function partyContext(p: DemoParty) {
+    const { days } = visibleEvent(p.eventId);
+    const all = profiles(p.eventId);
+    const memberIds = activeMembers(p).map((m) => m.userId);
+    const members = memberIds.map((id) => all.find((x) => x.userId === id));
+    if (members.some((m) => !m)) throw new ApiError('PREFERENCE_REQUIRED', '일행 전원이 일정과 스타일을 입력해야 해요.');
+    const others = all.filter((x) => !memberIds.some((id) => isBlockedBetween(id, x.userId)));
+    const today = isoOf(todayInSeoul(now()));
+    return { days: days.filter((d) => d.date >= today), members: members as MatchProfile[], others, memberIds };
   }
 
   /** 만남 중인 약속의 안전 확인: 정해진 시각에 묻고, 답이 없으면 다시 묻고, 믿는 사람 링크에 알립니다. (서버의 SafetyChecksService와 같은 규칙) */
@@ -1673,6 +1836,152 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!l) throw new ApiError('NOT_FOUND', '링크를 찾을 수 없어요.');
       l.revokedAt = now();
       return delay({ revoked: true as const });
+    },
+
+    async createParty(eventId) {
+      const user = currentUser();
+      visibleEvent(eventId);
+      settle();
+      if (parties.some((o) => o.eventId === eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === user.id))) {
+        throw new ApiError('PARTY_EXISTS', '이 행사에는 이미 일행이 있어요. 먼저 일행에서 빠지거나 해체해 주세요.');
+      }
+      const p: DemoParty = {
+        id: `demo-party-${++partySeq}`,
+        eventId,
+        leaderId: user.id,
+        status: 'INVITING',
+        inviteExpiresAt: partyInviteExpiresAt(now(), POLICY_DEFAULTS.PARTY_INVITE_EXPIRE_HOURS),
+        members: [{ userId: user.id, joinedAt: now(), active: true, remindedAt: null }],
+        sampleJoinAt: now().getTime() + autoAcceptDelayMs,
+      };
+      parties.push(p);
+      return delay(partyView(p, user.id));
+    },
+
+    async getEventParty(eventId) {
+      const user = currentUser();
+      settle();
+      const p = parties.find((o) => o.eventId === eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === user.id));
+      return delay({ party: p ? partyView(p, user.id) : null });
+    },
+
+    async listParties() {
+      const user = currentUser();
+      settle();
+      return delay(parties.filter((p) => p.status !== 'DISBANDED' && p.members.some((m) => m.active && m.userId === user.id)).map((p) => partyView(p, user.id)));
+    },
+
+    async getParty(id) {
+      const { user, p } = myParty(id);
+      return delay(partyView(p, user.id));
+    },
+
+    async leaveParty(id) {
+      const { user, p } = myParty(id);
+      const nick = nicknameOf(user.id);
+      leaveParty(p, user.id);
+      const rest = activeMembers(p);
+      if (p.leaderId === user.id && rest.length > 0) p.leaderId = rest[0].userId;
+      if (rest.length >= partySize.minSize) for (const m of rest) notify(m.userId, 'PARTY_MEMBER_LEFT', { nickname: nick, eventName: eventName(p.eventId) });
+      settleParty(p, now().getTime());
+      return delay({ left: true as const });
+    },
+
+    async disbandParty(id) {
+      const { user, p } = myParty(id);
+      if (p.leaderId !== user.id) throw new ApiError('FORBIDDEN', '대표만 일행을 풀 수 있어요.');
+      for (const m of activeMembers(p).filter((x) => x.userId !== user.id)) notify(m.userId, 'PARTY_DISBANDED', { eventName: eventName(p.eventId) });
+      p.status = 'DISBANDED';
+      for (const m of p.members) m.active = false;
+      return delay({ disbanded: true as const });
+    },
+
+    async proceedParty(id) {
+      const { user, p } = myParty(id);
+      if (p.leaderId !== user.id) throw new ApiError('FORBIDDEN', '대표만 진행할 수 있어요.');
+      if (p.status !== 'CONFIRMING') throw new ApiError('PARTY_STATE', '지금은 진행할 수 없는 일행이에요.');
+      const members = activeMembers(p);
+      const notReady = members.filter((m) => !partyReady(m.userId, p.eventId));
+      if (members.length - notReady.length < partySize.minSize) {
+        throw new ApiError('PARTY_NOT_READY', `입력을 마친 사람이 ${partySize.minSize}명 이상이어야 진행할 수 있어요.`);
+      }
+      for (const m of notReady) {
+        m.active = false;
+        notify(m.userId, 'PARTY_REMOVED', { eventName: eventName(p.eventId) });
+      }
+      settleParty(p, now().getTime());
+      return delay(partyView(p, user.id));
+    },
+
+    async getPartyCandidates(id, options) {
+      const { p } = myParty(id);
+      if (p.status !== 'ACTIVE') throw new ApiError('PARTY_NOT_READY', '일행 전원이 입력을 마쳐야 후보를 볼 수 있어요.');
+      const c = partyContext(p);
+      const result = matchPartyCandidates(`party:${p.id}`, c.members, c.others, c.days, POLICY, options);
+      const cards = result.candidates.map(cardOf);
+      return delay({
+        total: cards.length,
+        immersionRelaxed: result.immersionRelaxed,
+        candidates: cards,
+        widen:
+          cards.length === 0
+            ? expectedCounts(
+                combineProfiles(`party:${p.id}`, c.members, c.days),
+                c.others.filter((x) => !c.memberIds.includes(x.userId) && c.members.every((m) => passesMust(m, x))),
+                c.days,
+                POLICY,
+                options,
+              )
+            : null,
+      });
+    },
+
+    async getPartyCandidate(id, userId) {
+      const { p } = myParty(id);
+      if (p.status !== 'ACTIVE') throw new ApiError('PARTY_NOT_READY', '일행 전원이 입력을 마쳐야 후보를 볼 수 있어요.');
+      const c = partyContext(p);
+      const hit = matchPartyCandidates(`party:${p.id}`, c.members, c.others, c.days, POLICY, { shortTime: true, immersionPlus: true }).candidates.find(
+        (x) => x.userId === userId,
+      );
+      if (!hit) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const sample = people.get(userId);
+      return delay({ ...cardOf(hit), reasons: explainMatch(hit, c.days, PROMISE_SHORT_LABELS), publicFandoms: sample?.fandomPublic ? sample.fandoms : [] });
+    },
+
+    async previewPartyInvite(token) {
+      const user = currentUser();
+      settle();
+      const p = partyByToken(token);
+      if (activeMembers(p).some((m) => m.userId !== user.id && isBlockedBetween(user.id, m.userId))) {
+        throw new ApiError('INVITE_UNAVAILABLE', '열 수 없는 초대예요. 보낸 분께 새 링크를 부탁해 보세요.');
+      }
+      const problem = joinProblem(user.id, p);
+      const preview: PartyInvitePreview = {
+        event: { id: p.eventId, name: eventName(p.eventId) },
+        leaderNickname: nicknameOf(p.leaderId),
+        memberCount: activeMembers(p).length,
+        maxSize: partySize.maxSize,
+        joinable: problem === null,
+        problem,
+      };
+      return delay(preview);
+    },
+
+    async joinParty(token) {
+      const user = currentUser();
+      settle();
+      const p = partyByToken(token);
+      if (activeMembers(p).some((m) => m.userId !== user.id && isBlockedBetween(user.id, m.userId))) {
+        throw new ApiError('INVITE_UNAVAILABLE', '열 수 없는 초대예요. 보낸 분께 새 링크를 부탁해 보세요.');
+      }
+      if (!activeMembers(p).some((m) => m.userId === user.id)) {
+        const problem = joinProblem(user.id, p);
+        if (problem) throw new ApiError('INVITE_UNAVAILABLE', problem);
+        for (const m of activeMembers(p)) notify(m.userId, 'PARTY_JOINED', { nickname: nicknameOf(user.id), eventName: eventName(p.eventId) });
+        p.members.push({ userId: user.id, joinedAt: now(), active: true, remindedAt: null });
+        settleParty(p, now().getTime());
+      }
+      return delay(partyView(p, user.id));
     },
 
     async listNotifications() {

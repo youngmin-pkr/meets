@@ -795,3 +795,133 @@ describe('데모: 만남 중 안전', () => {
     await expect(backend.revokeShareLink(link.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
+
+describe('데모: 일행', () => {
+  async function world() {
+    let clock = new Date('2026-11-07T03:00:00Z'); // 한국 시간 11월 7일 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const tick = (min: number) => {
+      clock = new Date(clock.getTime() + min * 60 * 1000);
+    };
+    const signUp = async (person: string, nick: string) => {
+      const r = await backend.verifyIdentity(`fake:${person}:2000-01-01:F`, ALL_TERMS);
+      if (r.outcome !== 'SIGNED_UP') throw new Error();
+      backend.setSessionToken(r.sessionToken);
+      await backend.updateProfile(nick, 'ink');
+      await backend.setFandoms([], false);
+      await backend.setNotificationChoice(false);
+      return r.sessionToken;
+    };
+    const tokenA = await signUp('pa1', '데모일행');
+    const concert = await backend.getEvent((await backend.listEvents({})).find((e) => e.name.includes('콘서트'))!.id);
+    /** 일정·스타일 입력과 티켓 인증까지 */
+    const finish = async () => {
+      await backend.savePreference(concert.id, {
+        days: [{ eventDayId: concert.days[0].id, arriveTime: concert.days[0].startTime, leaveTime: concert.days[0].endTime, togetherSegmentIds: concert.days[0].segments.map((s) => s.id) }],
+        tempoAnswers: [2, 2, 2],
+        immersionAnswers: [2, 2],
+        must: { gender: 'ANY', age: 'ANY', promises: [] },
+      });
+      const t = await backend.startTicket(concert.id, 'TICKET');
+      await backend.uploadTicketImage(t.id, 'AAAA', 'image/jpeg', []);
+      await backend.confirmTicket(t.id, `P${Math.random().toString(36).slice(2, 8)}`, []);
+    };
+    return { backend, tick, signUp, tokenA, concert, finish };
+  }
+
+  test('일행을 만들면 초대 중이고 링크가 있다. 한 행사에 하나만', async () => {
+    const { backend, concert } = await world();
+    const party = await backend.createParty(concert.id);
+    expect(party).toMatchObject({ status: 'INVITING', minSize: 2, maxSize: 4 });
+    expect(party.invite?.url).toContain('/party-invite/');
+    await expect(backend.createParty(concert.id)).rejects.toMatchObject({ code: 'PARTY_EXISTS' });
+    expect((await backend.getEventParty(concert.id)).party?.id).toBe(party.id);
+    expect(await backend.listParties()).toHaveLength(1);
+  });
+
+  test('잠시 뒤 예시 친구가 합류하고, 내가 입력과 티켓 인증을 마치면 활성이 되어 후보를 볼 수 있다', async () => {
+    const { backend, tick, concert, finish } = await world();
+    const party = await backend.createParty(concert.id);
+    tick(1);
+    const joined = await backend.getParty(party.id);
+    expect(joined.members).toHaveLength(2);
+    expect(joined.status).toBe('CONFIRMING');
+    expect(joined.guide).toContain('내가');
+    await expect(backend.getPartyCandidates(party.id, {})).rejects.toMatchObject({ code: 'PARTY_NOT_READY' });
+    await finish();
+    const active = await backend.getParty(party.id);
+    expect(active).toMatchObject({ status: 'ACTIVE', actions: { candidates: true } });
+    expect(active.invite).toBeNull();
+    const res = await backend.getPartyCandidates(party.id, {});
+    const memberIds = active.members.map((m) => m.userId);
+    expect(res.candidates.every((c) => !memberIds.includes(c.userId))).toBe(true);
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).toEqual(expect.arrayContaining(['PARTY_JOINED', 'PARTY_READY']));
+  });
+
+  test('한 명만 남으면 일행이 풀린다', async () => {
+    const { backend, tick, concert, finish } = await world();
+    await finish();
+    const party = await backend.createParty(concert.id);
+    tick(1);
+    expect((await backend.getParty(party.id)).status).toBe('ACTIVE');
+    await backend.leaveParty(party.id);
+    await expect(backend.getParty(party.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await backend.getEventParty(concert.id)).party).toBeNull();
+    await backend.createParty(concert.id); // 풀린 뒤에는 새로 만들 수 있다
+  });
+
+  test('초대 링크로 합류하고, 대표가 입력하지 않은 친구를 빼고 진행할 수 있다', async () => {
+    const { backend, tick, signUp, tokenA, concert, finish } = await world();
+    await finish();
+    const party = await backend.createParty(concert.id);
+    const link = party.invite!.url;
+    const tokenB = await signUp('pa2', '데모친구');
+    expect(await backend.previewPartyInvite(link.split('/party-invite/')[1])).toMatchObject({ leaderNickname: '데모일행', memberCount: 1, joinable: true });
+    const joined = await backend.joinParty(link.split('/party-invite/')[1]);
+    expect(joined.status).toBe('CONFIRMING');
+    expect(joined.actions.proceedWithout).toBe(false);
+    backend.setSessionToken(tokenA);
+    tick(1); // 예시 친구도 합류
+    const view = await backend.getParty(party.id);
+    expect(view.members).toHaveLength(3);
+    expect(view.actions.proceedWithout).toBe(true);
+    const done = await backend.proceedParty(party.id);
+    expect(done.status).toBe('ACTIVE');
+    expect(done.members.map((m) => m.nickname)).not.toContain('데모친구');
+    backend.setSessionToken(tokenB);
+    await expect(backend.getParty(party.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).toContain('PARTY_REMOVED');
+  });
+
+  test('잘못된 링크와 이미 시작한 일행에는 합류할 수 없다', async () => {
+    const { backend, tick, signUp, tokenA, concert, finish } = await world();
+    await finish();
+    const party = await backend.createParty(concert.id);
+    const token = party.invite!.url.split('/party-invite/')[1];
+    tick(1); // 예시 친구 합류 → 활성
+    const tokenB = await signUp('pa3', '데모새친구');
+    await expect(backend.previewPartyInvite('nope.demo')).rejects.toMatchObject({ code: 'INVITE_UNAVAILABLE' });
+    expect(await backend.previewPartyInvite(token)).toMatchObject({ joinable: false });
+    await expect(backend.joinParty(token)).rejects.toMatchObject({ code: 'INVITE_UNAVAILABLE' });
+    backend.setSessionToken(tokenA);
+    void tokenB;
+  });
+
+  test('대표만 일행을 풀 수 있다', async () => {
+    const { backend, concert } = await world();
+    const party = await backend.createParty(concert.id);
+    expect(party.actions.disband).toBe(true);
+    await backend.disbandParty(party.id);
+    expect(await backend.listParties()).toEqual([]);
+  });
+
+  test('초대는 48시간 뒤 사라지고, 아무도 합류하지 않았으면 일행이 풀린다', async () => {
+    const { backend, tick, signUp, tokenA, concert } = await world();
+    const party = await backend.createParty(concert.id);
+    void tokenA;
+    void signUp;
+    tick(60 * 49);
+    // 초대 시간이 지나면 예시 친구도 합류하지 못해 혼자 남은 일행은 풀린다
+    await expect(backend.getParty(party.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});

@@ -27,7 +27,13 @@ export type NotificationKind =
   | 'ADMIN_WARNING'
   | 'ADMIN_RESTRICTION'
   | 'SAFETY_CHECK'
-  | 'SAFETY_CHECK_REMIND';
+  | 'SAFETY_CHECK_REMIND'
+  | 'PARTY_JOINED'
+  | 'PARTY_INPUT_REMIND'
+  | 'PARTY_READY'
+  | 'PARTY_MEMBER_LEFT'
+  | 'PARTY_REMOVED'
+  | 'PARTY_DISBANDED';
 
 export interface NotificationParams {
   nickname?: string;
@@ -109,6 +115,18 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return { title: '잘 만나고 계세요?', body: `${ev} 만남 중이에요. 짧게 확인만 할게요. 상대에게는 보이지 않아요.` };
     case 'SAFETY_CHECK_REMIND':
       return { title: '한 번만 더 확인할게요', body: `${ev} 만남은 잘 이어지고 있나요? 답하지 않아도 괜찮아요.` };
+    case 'PARTY_JOINED':
+      return { title: '일행에 친구가 합류했어요', body: `${nick}이 ${ev} 일행에 합류했어요. 일정과 스타일을 입력하면 후보를 같이 볼 수 있어요.` };
+    case 'PARTY_INPUT_REMIND':
+      return { title: '일행이 기다리고 있어요', body: `${ev} 일정과 스타일을 입력해야 일행 후보를 볼 수 있어요.` };
+    case 'PARTY_READY':
+      return { title: '일행 후보가 열렸어요', body: `${ev} 일행 전원이 입력을 마쳤어요. 같이 갈 사람을 찾아볼까요?` };
+    case 'PARTY_MEMBER_LEFT':
+      return { title: '일행 인원이 바뀌었어요', body: `${nick}이 ${ev} 일행에서 빠졌어요. 남은 사람끼리 계속할 수 있어요.` };
+    case 'PARTY_REMOVED':
+      return { title: '일행에서 빠졌어요', body: `일정과 스타일 입력이 없어 ${ev} 일행이 입력을 마친 사람들끼리 진행하기로 했어요. 개인으로 같이 갈 사람을 찾아볼 수 있어요.` };
+    case 'PARTY_DISBANDED':
+      return { title: '일행이 풀렸어요', body: `${ev} 일행이 풀렸어요. 개인으로 같이 갈 사람을 찾아볼 수 있어요.` };
     case 'ADMIN_WARNING':
       return { title: '운영 안내', body: '다른 이용자의 신고가 확인되어 안내드려요. 모두가 편안하게 만날 수 있도록 이용 규칙을 지켜 주세요.' };
     case 'ADMIN_RESTRICTION':

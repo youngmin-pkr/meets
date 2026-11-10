@@ -43,6 +43,7 @@ export function MyPageScreen(props: {
   onProposals: () => void;
   onNotifications: () => void;
   onSafety: () => void;
+  onParties: () => void;
 }) {
   const [trust, setTrust] = useState<TrustView | null>(null);
   const [blocks, setBlocks] = useState<BlockView[] | null>(null);
@@ -79,6 +80,7 @@ export function MyPageScreen(props: {
 
       <View style={{ borderRadius: 16, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.white }}>
         <MenuRow label="받은 제안 · 보낸 제안" onPress={props.onProposals} />
+        <MenuRow label="일행" onPress={props.onParties} />
         <MenuRow label="알림" onPress={props.onNotifications} />
         <MenuRow label="안전 설정" onPress={props.onSafety} last />
       </View>

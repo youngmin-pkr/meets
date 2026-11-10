@@ -27,7 +27,7 @@ export async function startApp(clock: Clock = new TestClock(), logger?: false, r
 export async function resetDb(app: INestApplication) {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "ShareLink","SafetyCheck","UserRestriction","TrustChange","Report","Block","Review","ChatRead","ChatMessage","Notification","AppointmentParticipant","Appointment","Proposal","TicketHash","TicketImage","TicketVerification","AttendancePlan","WaitRegistration","PreferenceDay","Preference","AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
+    'TRUNCATE "ShareLink","SafetyCheck","PartyMember","Party","UserRestriction","TrustChange","Report","Block","Review","ChatRead","ChatMessage","Notification","AppointmentParticipant","Appointment","Proposal","TicketHash","TicketImage","TicketVerification","AttendancePlan","WaitRegistration","PreferenceDay","Preference","AdminApproval","AdminSession","AdminUser","EventReport","MeetingSpot","EventSegment","EventDay","Event","UserFandom","Fandom","Session","TermsConsent","IdentityVerification","User","PolicyValue","AuditLog" CASCADE',
   );
 }
 

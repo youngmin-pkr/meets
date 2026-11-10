@@ -31,6 +31,8 @@ enum NotificationChoice {
 }
 
 model User {
+  ledParties            Party[]             @relation("PartyLeader")
+  partyMemberships      PartyMember[]       @relation("PartyMemberUser")
   id                    String              @id @default(uuid())
   nickname              String?
   /// 같은 별명 막기용 (영문은 소문자로 바꾼 값)
@@ -185,6 +187,7 @@ enum EventStatus {
 
 /// 행사. 포스터·사진 없이 사실 정보만 저장합니다.
 model Event {
+  parties        Party[]
   id             String        @id @default(uuid())
   name           String
   category       EventCategory
@@ -476,6 +479,14 @@ enum ProposalStatus {
 }
 
 /// 제안 종류: 일반 / 즉석 / 청소년 그룹 (지금은 일반만)
+enum PartyStatus {
+  INVITING
+  CONFIRMING
+  ACTIVE
+  PROPOSING
+  DISBANDED
+}
+
 enum ProposalKind {
   NORMAL
   INSTANT
@@ -626,6 +637,12 @@ enum NotificationKind {
   ADMIN_RESTRICTION
   SAFETY_CHECK
   SAFETY_CHECK_REMIND
+  PARTY_JOINED
+  PARTY_INPUT_REMIND
+  PARTY_READY
+  PARTY_MEMBER_LEFT
+  PARTY_REMOVED
+  PARTY_DISBANDED
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -861,4 +878,40 @@ model SafetyCheck {
   user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([appointmentId, userId, seq])
+}
+
+/// 일행 (정리문서 4장 Party). 상태는 PartyStateService에서만 바꿉니다.
+model Party {
+  id              String        @id @default(uuid())
+  eventId         String
+  leaderId        String
+  status          PartyStatus
+  /// 초대 링크가 사라지는 시각 (만들 때의 정책 값)
+  inviteExpiresAt DateTime
+  createdAt       DateTime      @default(now())
+  endedAt         DateTime?
+  event           Event         @relation(fields: [eventId], references: [id])
+  leader          User          @relation("PartyLeader", fields: [leaderId], references: [id])
+  members         PartyMember[]
+
+  @@index([eventId, status])
+}
+
+/// 일행 구성원. 나간 사람도 기록으로 남기고, 한 행사에서 한 사람은 활성 일행원으로 한 번만 있을 수 있습니다. (partial unique index는 마이그레이션 SQL에 있음)
+model PartyMember {
+  id         String    @id @default(uuid())
+  partyId    String
+  eventId    String
+  userId     String
+  /// 활성 구성원인지 (나가거나 일행이 풀리면 false)
+  active     Boolean   @default(true)
+  joinedAt   DateTime  @default(now())
+  leftAt     DateTime?
+  /// 입력 재촉을 보낸 시각 (1번만)
+  remindedAt DateTime?
+  party      Party     @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user       User      @relation("PartyMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([partyId])
+  @@index([userId, active])
 }

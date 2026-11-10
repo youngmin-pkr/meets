@@ -22,6 +22,11 @@ export type Screen =
   | 'APPOINTMENT'
   | 'APPOINTMENT_CANCEL'
   | 'SAFETY_SETTINGS'
+  /** 일행 */
+  | 'PARTY'
+  | 'PARTY_LIST'
+  | 'PARTY_JOIN'
+  | 'PARTY_CANDIDATES'
   /** 알림함 */
   | 'NOTIFICATIONS'
   /** 앱 안 채팅 */

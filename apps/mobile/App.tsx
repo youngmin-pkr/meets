@@ -7,6 +7,7 @@ import { ActivityIndicator, Platform, View } from 'react-native';
 import {
   todayInSeoul,
   type AppointmentView,
+  type PartyView,
   type ProposalView,
   type MaskBox,
   type MyTicketStatus,
@@ -52,6 +53,7 @@ import { EventReportedScreen, EventReportScreen } from './src/screens/EventRepor
 import { ChatListScreen, ChatRulesScreen, ChatScreen } from './src/screens/ChatScreens';
 import { BlockListScreen, MyPageScreen, TrustLevelScreen } from './src/screens/MyScreens';
 import { SafetySettingsScreen } from './src/screens/SafetyScreens';
+import { PartyCandidatesScreen, PartyJoinScreen, PartyListScreen, PartyScreen } from './src/screens/PartyScreens';
 import { ReportScreen, ReviewAgainScreen, ReviewDoneScreen, ReviewPickScreen, ReviewStartScreen } from './src/screens/ReviewScreens';
 import { chooseOverall, initialReviewDraft, type ReviewDraft } from './src/reviewFlow';
 import type { Tab } from './src/ui';
@@ -68,6 +70,9 @@ export default function App() {
   const [flowError, setFlowError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // 티켓 인증
+  const [partyEventId, setPartyEventId] = useState<string | null>(null);
+  const [partyBack, setPartyBack] = useState<Screen>('PARTY_LIST');
+  const [partyForCandidates, setPartyForCandidates] = useState<PartyView | null>(null);
   const [myTicket, setMyTicket] = useState<MyTicketStatus | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [ticketKind, setTicketKind] = useState<TicketKind>('TICKET');
@@ -408,8 +413,42 @@ export default function App() {
             onProposals={() => setScreen('PROPOSALS')}
             onNotifications={() => setScreen('NOTIFICATIONS')}
             onSafety={() => setScreen('SAFETY_SETTINGS')}
+            onParties={() => setScreen('PARTY_LIST')}
           />
         )}
+        {screen === 'PARTY_LIST' && (
+          <PartyListScreen
+            onBack={() => setScreen('ME')}
+            onOpen={(p) => {
+              setPartyEventId(p.event.id);
+              setPartyBack('PARTY_LIST');
+              setScreen('PARTY');
+            }}
+            onJoin={() => setScreen('PARTY_JOIN')}
+          />
+        )}
+        {screen === 'PARTY_JOIN' && (
+          <PartyJoinScreen
+            onBack={() => setScreen('PARTY_LIST')}
+            onJoined={(p) => {
+              setPartyEventId(p.event.id);
+              setPartyBack('PARTY_LIST');
+              setScreen('PARTY');
+            }}
+          />
+        )}
+        {screen === 'PARTY' && partyEventId && (
+          <PartyScreen
+            eventId={partyEventId}
+            onBack={() => setScreen(partyBack)}
+            onInput={(id) => openCandidates(id)}
+            onCandidates={(p) => {
+              setPartyForCandidates(p);
+              setScreen('PARTY_CANDIDATES');
+            }}
+          />
+        )}
+        {screen === 'PARTY_CANDIDATES' && partyForCandidates && <PartyCandidatesScreen party={partyForCandidates} onBack={() => setScreen('PARTY')} />}
         {screen === 'SAFETY_SETTINGS' && <SafetySettingsScreen onBack={() => setScreen('ME')} />}
         {screen === 'TRUST' && <TrustLevelScreen onBack={() => setScreen('ME')} onEvents={() => goTab('EVENTS')} />}
         {screen === 'BLOCKS' && <BlockListScreen onBack={() => setScreen('ME')} onReport={(a) => openReport(a, 'BLOCKS')} />}
@@ -521,6 +560,11 @@ export default function App() {
             }}
             onOtherDay={() => setScreen('SCHEDULE')}
             onWait={() => setScreen('WAIT')}
+            onParty={() => {
+              setPartyEventId(event.id);
+              setPartyBack('CANDIDATES');
+              setScreen('PARTY');
+            }}
           />
         )}
         {screen === 'CANDIDATE_DETAIL' && event && candidate && (

@@ -14,6 +14,8 @@ import type {
   ChatView,
   AppointmentView,
   HelpResult,
+  PartyInvitePreview,
+  PartyView,
   SafetySettings,
   ShareLinkView,
   NotificationView,
@@ -130,6 +132,25 @@ function createHttpBackend(baseUrl: string): Backend {
     listShareLinks: (id) => call<ShareLinkView[]>('GET', `/appointments/${encodeURIComponent(id)}/share-links`),
     createShareLink: (id, showStatus) => call<ShareLinkView>('POST', `/appointments/${encodeURIComponent(id)}/share-links`, { showStatus }),
     revokeShareLink: (linkId) => call<{ revoked: true }>('DELETE', `/share-links/${encodeURIComponent(linkId)}`),
+    createParty: (eventId) => call<PartyView>('POST', `/events/${encodeURIComponent(eventId)}/party`),
+    getEventParty: (eventId) => call<{ party: PartyView | null }>('GET', `/events/${encodeURIComponent(eventId)}/party`),
+    listParties: () => call<PartyView[]>('GET', '/me/parties'),
+    getParty: (id) => call<PartyView>('GET', `/parties/${encodeURIComponent(id)}`),
+    leaveParty: (id) => call<{ left: true }>('POST', `/parties/${encodeURIComponent(id)}/leave`),
+    disbandParty: (id) => call<{ disbanded: true }>('POST', `/parties/${encodeURIComponent(id)}/disband`),
+    proceedParty: (id) => call<PartyView>('POST', `/parties/${encodeURIComponent(id)}/proceed`),
+    getPartyCandidates: (id, o) => {
+      const q = new URLSearchParams();
+      if (o.dayId) q.set('dayId', o.dayId);
+      if (o.sort) q.set('sort', o.sort);
+      if (o.shortTime) q.set('shortTime', 'true');
+      if (o.immersionPlus) q.set('immersionPlus', 'true');
+      const qs = q.toString();
+      return call<CandidatesResponse>('GET', `/parties/${encodeURIComponent(id)}/candidates${qs ? `?${qs}` : ''}`);
+    },
+    getPartyCandidate: (id, userId) => call<CandidateDetail>('GET', `/parties/${encodeURIComponent(id)}/candidates/${encodeURIComponent(userId)}`),
+    previewPartyInvite: (token) => call<PartyInvitePreview>('GET', `/party-invites/${encodeURIComponent(token)}`),
+    joinParty: (token) => call<PartyView>('POST', `/party-invites/${encodeURIComponent(token)}/join`),
     listNotifications: () => call<{ items: NotificationView[]; unread: number }>('GET', '/me/notifications'),
     markNotificationsRead: () => call<{ unread: number }>('POST', '/me/notifications/read'),
     getHomeSummary: () => call<HomeSummary>('GET', '/me/home'),
