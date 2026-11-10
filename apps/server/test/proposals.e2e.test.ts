@@ -97,6 +97,9 @@ const send = (token: string, ev: Ev, b: object) => http(app).post(`/events/${ev.
 
 describe('제안 상태 전이 표', () => {
   const allowed = [
+    ['DRAFT', 'SENT'],
+    ['DRAFT', 'CANCELLED'],
+    ['DRAFT', 'EXPIRED'],
     ['SENT', 'ACCEPTED'],
     ['SENT', 'REJECTED'],
     ['SENT', 'EXPIRED'],

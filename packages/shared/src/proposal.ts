@@ -6,9 +6,10 @@
  * - 24시간 안에 답이 없으면 만료. 행사 24시간 전이 더 빠르면 그때까지.
  */
 
-export type ProposalStatus = 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
+export type ProposalStatus = 'DRAFT' | 'SENT' | 'ACCEPTED' | 'REJECTED' | 'EXPIRED' | 'CANCELLED';
 
 export const PROPOSAL_STATUS_LABELS: Record<ProposalStatus, string> = {
+  DRAFT: '일행 동의를 모으는 중',
   SENT: '답을 기다리는 중',
   ACCEPTED: '수락됨',
   REJECTED: '거절됨',
@@ -94,6 +95,12 @@ export interface ProposalView {
   meetingSpot: { id: string | null; name: string };
   expiresAt: string;
   createdAt: string;
+  /** 일행이 보낸 제안이면 일행원들 (제안을 만든 사람 포함). 받는 사람에게도 보입니다. 개인 제안이면 null */
+  party: { id: string | null; members: Counterpart[] } | null;
+  /** 일행 제안 초안일 때: 일행원의 동의 상황 (보낸 쪽 일행원에게만) */
+  consent: { agreed: number; total: number; members: Array<{ userId: string; nickname: string; agreed: boolean; isMe: boolean }>; needsMyAgreement: boolean } | null;
+  /** 내가 취소할 수 있는지 (보낸 사람, 또는 보낸 일행의 일행원) */
+  canCancel: boolean;
 }
 
 /** 제안 보내기 입력 */

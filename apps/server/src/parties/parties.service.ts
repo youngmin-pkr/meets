@@ -13,6 +13,7 @@ import {
   type MatchOptions,
   type PartyInvitePreview,
   type PartySizePolicy,
+  type PartyProposalView,
   type PartyStatus,
   type PartyView,
 } from '@meets/shared';
@@ -26,6 +27,7 @@ import { MatchingService } from '../matching/matching.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
 import { isUniqueViolation, PrismaService } from '../prisma/prisma.service';
+import { PartyProposalsService } from './party-proposals.service';
 import { PartyStateService } from './party-state.service';
 
 const SCOPE = 'party';
@@ -50,6 +52,7 @@ export class PartiesService {
     private readonly policy: PolicyService,
     private readonly state: PartyStateService,
     private readonly matching: MatchingService,
+    private readonly partyProposals: PartyProposalsService,
     private readonly notifications: NotificationsService,
     @Inject(SERVER_CONFIG) private readonly config: ServerConfig,
     @Inject(CLOCK) private readonly clock: Clock,
@@ -99,6 +102,8 @@ export class PartiesService {
         if (error instanceof AppError) return; // 동시에 다른 곳에서 바꿈
         throw error;
       }
+      // 일행이 풀리면 진행 중인 초안·제안도 정리합니다. (한 명만 남았으면 그 사람의 개인 제안으로 이어짐)
+      if (next.to === 'DISBANDED') await this.partyProposals.onPartyEnded(p.id, p.members.length === 1 ? p.members[0].userId : null);
     }
   }
 
@@ -130,8 +135,49 @@ export class PartiesService {
     return p;
   }
 
+  /** 이 일행이 보낸(보내려는) 제안 */
+  private async proposalOf(partyId: string, me: string): Promise<PartyProposalView | null> {
+    const p = await this.prisma.proposal.findFirst({
+      where: { senderPartyId: partyId, status: { in: ['DRAFT', 'SENT'] } },
+      include: {
+        receiver: { select: { id: true, nickname: true, avatarInitial: true, avatarColor: true } },
+        consents: { include: { user: { select: { nickname: true } } } },
+        sender: { select: { nickname: true } },
+        eventDay: { include: { segments: { orderBy: { sortOrder: 'asc' } } } },
+      },
+    });
+    if (!p) return null;
+    const mine = p.consents.find((c) => c.userId === me);
+    return {
+      id: p.id,
+      status: p.status as 'DRAFT' | 'SENT',
+      receiver: {
+        userId: p.receiver.id,
+        nickname: p.receiver.nickname ?? '',
+        avatarInitial: p.receiver.avatarInitial ?? '',
+        avatarColor: AVATAR_COLORS[(p.receiver.avatarColor ?? 'ink') as keyof typeof AVATAR_COLORS] ?? AVATAR_COLORS.ink,
+      },
+      date: p.eventDay?.date ?? p.date,
+      segments: p.eventDay
+        ? p.eventDay.segments.filter((s) => p.segmentIds.includes(s.id)).map((s) => ({ id: s.id, label: s.label, startTime: s.startTime, endTime: s.endTime }))
+        : (p.segmentsSnapshot as unknown as PartyProposalView['segments']),
+      meetingSpotName: p.meetingSpotName,
+      expiresAt: p.expiresAt.toISOString(),
+      agreements:
+        p.status === 'DRAFT'
+          ? [
+              { userId: p.senderId, nickname: p.sender.nickname ?? '', agreed: true, isMe: p.senderId === me },
+              ...p.consents.map((c) => ({ userId: c.userId, nickname: c.user.nickname ?? '', agreed: !!c.agreedAt, isMe: c.userId === me })),
+            ]
+          : [],
+      needsMyAgreement: p.status === 'DRAFT' && !!mine && !mine.agreedAt,
+      canCancel: true,
+    };
+  }
+
   private async view(p: PartyRow, me: string): Promise<PartyView> {
     const size = await this.size();
+    const proposal = await this.proposalOf(p.id, me);
     const facts = await this.matching.inputFacts(p.eventId, p.members.map((m) => m.userId));
     const members = p.members.map((m) => ({
       userId: m.userId,
@@ -156,6 +202,7 @@ export class PartiesService {
       members,
       minSize: size.minSize,
       maxSize: size.maxSize,
+      proposal,
       invite: isLeader && joinable ? { url: `${this.config.publicBaseUrl}/party-invite/${signToken(this.config.ciHashSecret, SCOPE, p.id)}`, expiresAt: p.inviteExpiresAt.toISOString() } : null,
       guide: partyGuide({ status, isLeader, notReady: notReady.filter((m) => !m.isMe).map((m) => m.nickname), meNotReady: notReady.some((m) => m.isMe), memberCount: members.length, maxSize: size.maxSize }),
       actions: {
@@ -163,11 +210,13 @@ export class PartiesService {
         disband: isLeader,
         leave: true,
         candidates: status === 'ACTIVE',
+        propose: status === 'ACTIVE' && !proposal,
       },
     };
   }
 
   async get(userId: string, partyId: string): Promise<PartyView> {
+    await this.partyProposals.expireDue(partyId);
     return this.view(await this.loadMine(userId, partyId), userId);
   }
 
@@ -309,6 +358,8 @@ export class PartiesService {
         for (const m of rest) await this.notifications.notify(tx, m.userId, 'PARTY_MEMBER_LEFT', { nickname: nick, eventName: p.event.name });
       }
     });
+    // 남은 사람이 둘 이상이면 초안에서 빠진 사람의 동의를 뺍니다. (한 명만 남으면 아래에서 일행이 풀리며 정리됨)
+    if (p.members.length - 1 >= (await this.size()).minSize) await this.partyProposals.onMemberLeft(p.id, userId);
     await this.evaluate(p.id);
     return { left: true as const };
   }
@@ -323,6 +374,7 @@ export class PartiesService {
       await tx.partyMember.updateMany({ where: { partyId: p.id, active: true }, data: { active: false, leftAt: now } });
       for (const m of p.members.filter((x) => x.userId !== userId)) await this.notifications.notify(tx, m.userId, 'PARTY_DISBANDED', { eventName: p.event.name });
     });
+    await this.partyProposals.onPartyEnded(p.id, null);
     return { disbanded: true as const };
   }
 

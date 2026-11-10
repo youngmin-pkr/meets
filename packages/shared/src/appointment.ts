@@ -5,6 +5,7 @@
  * 상태를 실제로 저장하는 곳은 서버의 appointment-state.service.ts 한 곳뿐입니다.
  */
 import type { PolicyKey } from './policy';
+import { honorific } from './notification';
 import { seoulDateTime, type AppointmentStatus, type Counterpart } from './proposal';
 
 /** 약속의 두 쪽: 제안을 보낸 쪽(A)과 받은 쪽(B). 일행이 있으면 한 쪽에 여러 명이 있을 수 있습니다. */
@@ -292,6 +293,12 @@ export type AppointmentEndReason = 'CANCELLED' | 'NO_CONFIRM' | 'NO_SHOW' | 'EVE
 
 /** 다시 정하기 사유 */
 export type RescheduleReason = 'EVENT_CHANGED' | 'MEMBERS_CHANGED';
+
+/** '하늘님' / '하늘님 외 2명': 화면에서 함께하는 사람들을 부르는 말 (1:1이면 상대 한 명) */
+export function companionsLabel(x: { counterpart: Counterpart; companions?: Counterpart[] }): string {
+  const names = (x.companions && x.companions.length > 0 ? x.companions : [x.counterpart]).map((c) => c.nickname);
+  return honorific(groupName(names));
+}
 
 /** 약속에 함께하는 다른 사람 (이미 빠진 사람은 없음) */
 export interface AppointmentCompanion extends Counterpart {
