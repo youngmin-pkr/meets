@@ -564,6 +564,8 @@ model Appointment {
   cancelReason  String?
   /// 행사 일정이 바뀌었을 때 다시 정하기 기한
   rescheduleDeadline DateTime?
+  /// 다시 정하기 사유: EVENT_CHANGED(행사 일정) | MEMBERS_CHANGED(인원이 바뀜)
+  rescheduleReason   String?
   /// 취소·중간 종료·자동 종료·종료된 시각 (채팅이 닫히는 시각 계산에 씀)
   endedAt       DateTime?
   createdAt     DateTime                 @default(now())
@@ -604,6 +606,12 @@ model AppointmentParticipant {
   noShowReportedAt     DateTime?
   /// 운영팀이 이 사람의 노쇼를 사실로 확인함 (7-2단계에서 정함. 신뢰 단계 하락에 셈)
   noShowConfirmed      Boolean                @default(false)
+  /// 제안을 보낸 쪽(A)인지 받은 쪽(B)인지. 일행이 있어도 한 쪽은 한 명 이상 남아야 약속이 계속됩니다. (9-2a)
+  side                 String                 @default("A")
+  /// 약속에서 빠진 시각 (취소·도움 요청·차단·전날 확인 안 함). 빠진 뒤에는 이 약속의 상대에게 보이지 않고 채팅도 읽을 수 없습니다.
+  leftAt               DateTime?
+  /// CANCEL | SAFETY | BLOCK | SUSPENDED | NO_CONFIRM
+  leftReason           String?
   /// 같은 알림을 두 번 보내지 않기 위한 기록
   dayBeforeNotifiedAt  DateTime?
   reminderNotifiedAt   DateTime?
@@ -643,6 +651,7 @@ enum NotificationKind {
   PARTY_MEMBER_LEFT
   PARTY_REMOVED
   PARTY_DISBANDED
+  APPOINTMENT_MEMBER_LEFT
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -731,7 +740,7 @@ model Review {
   author        User          @relation("ReviewAuthor", fields: [authorId], references: [id])
   target        User          @relation("ReviewTarget", fields: [targetId], references: [id])
 
-  @@unique([appointmentId, authorId])
+  @@unique([appointmentId, authorId, targetId])
   @@index([targetId, overall])
 }
 

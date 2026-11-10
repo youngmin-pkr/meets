@@ -80,12 +80,15 @@ export class BlocksService {
   }
 
   /** 약속 상대를 차단 (채팅 규칙 화면의 '상대 차단하고 약속 취소') */
-  async blockCounterpart(userId: string, appointmentId: string, source: BlockSource) {
+  async blockCounterpart(userId: string, appointmentId: string, source: BlockSource, targetId?: string) {
     const a = await this.prisma.appointment.findFirst({
       where: { id: appointmentId, participants: { some: { userId } } },
       include: { participants: true },
     });
     if (!a) throw new AppError('NOT_FOUND', '약속을 찾을 수 없어요.');
-    return this.block(userId, a.participants.find((p) => p.userId !== userId)!.userId, source);
+    const others = a.participants.filter((p) => p.userId !== userId && (!targetId || p.userId === targetId));
+    // 여러 명이 만나는 약속에서는 누구를 차단하는지 알려 주어야 합니다.
+    if (others.length !== 1) throw new AppError('BLOCK_INVALID', '차단할 사람을 골라 주세요.');
+    return this.block(userId, others[0].userId, source);
   }
 }

@@ -7,6 +7,10 @@
 import type { PolicyKey } from './policy';
 import { seoulDateTime, type AppointmentStatus, type Counterpart } from './proposal';
 
+/** 약속의 두 쪽: 제안을 보낸 쪽(A)과 받은 쪽(B). 일행이 있으면 한 쪽에 여러 명이 있을 수 있습니다. */
+export type AppointmentSide = 'A' | 'B';
+export const otherSide = (side: AppointmentSide): AppointmentSide => (side === 'A' ? 'B' : 'A');
+
 export const APPOINTMENT_STATUSES: AppointmentStatus[] = [
   'PENDING_CONFIRM',
   'CONFIRMED',
@@ -157,9 +161,13 @@ export interface ParticipantFacts {
   dayBeforeNotifiedAt: Date | null;
   reminderNotifiedAt: Date | null;
   soonNotifiedAt: Date | null;
+  /** 제안을 보낸 쪽(A) / 받은 쪽(B). 없으면 A로 봅니다 */
+  side?: AppointmentSide;
+  /** 이 사람이 '안 나왔어요'를 이미 눌렀는지 */
+  noShowReportedAt?: Date | null;
 }
 
-/** 시간 규칙 계산에 필요한 약속 정보 */
+/** 시간 규칙 계산에 필요한 약속 정보. participants에는 아직 빠지지 않은 사람만 넣습니다. */
 export interface AppointmentFacts {
   status: AppointmentStatus;
   date: string;
@@ -179,11 +187,19 @@ export function factsTimes(f: AppointmentFacts) {
   return { startsAt, endsAt, ...c, opensAt };
 }
 
+/** 양쪽에 한 명 이상 남아 있는지 */
+export function sidesRemain(people: Array<{ side?: AppointmentSide }>): boolean {
+  return (['A', 'B'] as AppointmentSide[]).every((side) => people.some((p) => (p.side ?? 'A') === side));
+}
+
 /** 시간이 되어 저절로 일어나는 일 */
 export type AppointmentStep =
   | { kind: 'NOTIFY_DAY_BEFORE'; userIds: string[] }
   | { kind: 'NOTIFY_REMINDER'; userIds: string[] }
+  /** 확인 마감: 한 쪽에 확인한 사람이 한 명도 없어 약속이 취소됨 */
   | { kind: 'CANCEL_NO_CONFIRM'; noResponseUserIds: string[] }
+  /** 확인 마감: 확인하지 않은 사람만 빠지고, 확인한 사람들끼리 확정 (양쪽에 한 명 이상 남을 때) */
+  | { kind: 'DROP_NO_CONFIRM'; noResponseUserIds: string[] }
   | { kind: 'NOTIFY_SOON'; userIds: string[] }
   | { kind: 'START' }
   | { kind: 'END' }
@@ -197,7 +213,8 @@ export function dueAppointmentSteps(f: AppointmentFacts, now: Date): Appointment
 
   if (f.status === 'PENDING_CONFIRM') {
     if (now >= t.deadline) {
-      steps.push({ kind: 'CANCEL_NO_CONFIRM', noResponseUserIds: ids((p) => !p.confirmedAt) });
+      const silent = ids((p) => !p.confirmedAt);
+      steps.push({ kind: sidesRemain(f.participants.filter((p) => !!p.confirmedAt)) ? 'DROP_NO_CONFIRM' : 'CANCEL_NO_CONFIRM', noResponseUserIds: silent });
       return steps;
     }
     if (now >= t.opensAt) {
@@ -240,9 +257,9 @@ export interface AppointmentActions {
 export function appointmentActions(f: AppointmentFacts, me: string, now: Date, opts: { newScheduleAvailable: boolean }): AppointmentActions {
   const t = factsTimes(f);
   const mine = f.participants.find((p) => p.userId === me);
-  const theirs = f.participants.find((p) => p.userId !== me);
+  const others = f.participants.filter((p) => p.userId !== me);
   const none: AppointmentActions = { confirm: false, reconfirm: false, cancel: false, arrive: false, reportNoShow: false };
-  if (!mine || !theirs) return none;
+  if (!mine || others.length === 0) return none;
   const meetingTime = f.status === 'CONFIRMED' || f.status === 'IN_PROGRESS';
   return {
     confirm: f.status === 'PENDING_CONFIRM' && now >= t.opensAt && now < t.deadline && !mine.confirmedAt,
@@ -253,7 +270,8 @@ export function appointmentActions(f: AppointmentFacts, me: string, now: Date, o
     reportNoShow:
       f.status === 'IN_PROGRESS' &&
       !!mine.arrivedAt &&
-      !theirs.arrivedAt &&
+      !mine.noShowReportedAt &&
+      others.some((o) => !o.arrivedAt) &&
       now >= new Date(t.startsAt.getTime() + f.policy.noShowWaitMinutes * MINUTE),
   };
 }
@@ -272,11 +290,31 @@ export const CANCEL_REASON_CODES = Object.keys(CANCEL_REASONS) as CancelReason[]
 /** 약속이 끝난 이유 */
 export type AppointmentEndReason = 'CANCELLED' | 'NO_CONFIRM' | 'NO_SHOW' | 'EVENT_CANCELLED';
 
+/** 다시 정하기 사유 */
+export type RescheduleReason = 'EVENT_CHANGED' | 'MEMBERS_CHANGED';
+
+/** 약속에 함께하는 다른 사람 (이미 빠진 사람은 없음) */
+export interface AppointmentCompanion extends Counterpart {
+  /** 나와 같은 쪽(일행)인지 */
+  sameSide: boolean;
+  confirmed: boolean;
+  arrivedAt: string | null;
+}
+
+/** '하늘' / '하늘 외 2명' */
+export function groupName(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names[0]} 외 ${names.length - 1}명`;
+}
+
 /** 약속 (앱이 받는 모양) */
 export interface AppointmentView {
   id: string;
   status: AppointmentStatus;
+  /** 1:1이면 상대, 여러 명이 만나면 첫 번째 상대 */
   counterpart: Counterpart;
+  /** 나를 뺀 함께하는 사람들 (1:1이면 상대 한 명) */
+  companions: AppointmentCompanion[];
   event: { id: string; name: string };
   day: { id: string | null; date: string; startTime: string };
   segments: Array<{ id: string; label: string; startTime: string; endTime: string }>;
@@ -286,7 +324,7 @@ export interface AppointmentView {
   endsAt: string;
   /** 전날 확인 */
   confirm: { opensAt: string; deadline: string; mine: boolean; theirs: boolean };
-  /** 도착 기록 */
+  /** 도착 기록 (theirs: 다른 사람 중 가장 먼저 도착한 시각) */
   arrival: { mine: string | null; theirs: string | null };
   /** 이 시각까지 취소하면 영향 없음 */
   freeCancelUntil: string;
@@ -297,6 +335,8 @@ export interface AppointmentView {
     theirs: boolean;
     /** 바뀐 일정. 이 날이 없어졌으면 null (다시 정할 수 없고, 기한이 지나면 보류) */
     newSchedule: { date: string; startTime: string; endTime: string } | null;
+    /** 행사 일정이 바뀌어서인지, 함께하는 사람이 줄어서인지 */
+    reason: RescheduleReason;
   } | null;
   /** 끝난 이유 */
   end: { reason: AppointmentEndReason; byMe: boolean; cancelReason: string | null; late: boolean } | null;
@@ -306,7 +346,7 @@ export interface AppointmentView {
   /** 이 약속 채팅에서 내가 아직 읽지 않은 상대 메시지 수 */
   unreadMessages: number;
   /** 후기: 남길 수 있는지, 이미 남겼는지, 마지막 시각 (후기 내용은 어디에도 돌려주지 않음) */
-  review: { canWrite: boolean; done: boolean; deadline: string };
+  review: { canWrite: boolean; done: boolean; deadline: string; /** 아직 후기를 남기지 않은 상대들 (후기는 한 사람씩 따로 남김) */ targets: Counterpart[] };
   /** 안전: 지금 도움을 요청할 수 있는지, 답을 기다리는 안전 확인 */
   safety: { canRequestHelp: boolean; pendingCheck: { id: string; askedAt: string; minutesSinceStart: number } | null };
 }
@@ -320,4 +360,42 @@ export function dDayLabel(date: string, today: string): string {
   const n = toDays(date) - toDays(today);
   if (n === 0) return 'D-DAY';
   return n > 0 ? `D-${n}` : `D+${-n}`;
+}
+
+// ───────────── 여러 명이 만나는 약속에서 누가 빠질 때 (정리문서 2장 일행, 9-2a) ─────────────
+
+/** 약속에서 빠지는 사람이 생겼을 때 약속이 어떻게 되는지 */
+export type LeaveOutcome =
+  /** 그 사람의 쪽에 아무도 남지 않아 약속이 취소됨 */
+  | { kind: 'CANCEL_ALL' }
+  /** 남은 사람끼리 계속. reconfirmSide가 있으면 그 쪽이 다시 확인해야 함 */
+  | { kind: 'CONTINUE'; reconfirmSide: AppointmentSide | null; becomesConfirmed: boolean };
+
+/**
+ * - 한 쪽이 비면 약속은 취소됩니다.
+ * - 확정된 약속에서 빠지면 상대 쪽이 다시 확인합니다. (RESCHEDULING, 사유 MEMBERS_CHANGED)
+ * - 확정 대기에서 빠지면 남은 사람이 모두 이미 확인했을 때 바로 확정됩니다.
+ * - 만남 중에 빠지면 그냥 남은 사람끼리 계속합니다.
+ */
+export function outcomeOfLeaving(
+  status: AppointmentStatus,
+  people: Array<{ userId: string; side?: AppointmentSide; confirmedAt?: Date | null }>,
+  leaverId: string,
+): LeaveOutcome {
+  const leaver = people.find((p) => p.userId === leaverId);
+  const rest = people.filter((p) => p.userId !== leaverId);
+  const side = leaver?.side ?? 'A';
+  if (!sidesRemain(rest)) return { kind: 'CANCEL_ALL' };
+  if (status === 'CONFIRMED') return { kind: 'CONTINUE', reconfirmSide: otherSide(side), becomesConfirmed: false };
+  if (status === 'PENDING_CONFIRM') return { kind: 'CONTINUE', reconfirmSide: null, becomesConfirmed: rest.every((p) => !!p.confirmedAt) };
+  return { kind: 'CONTINUE', reconfirmSide: null, becomesConfirmed: false };
+}
+
+/**
+ * 노쇼 신고를 눌렀을 때 (정리문서 2장 약속, 9-2a): 도착하지 않은 사람마다 신고가 접수되고,
+ * 다른 사람이 아무도 도착하지 않았을 때만 만남이 끝납니다. 일부만 안 왔으면 만남은 계속됩니다.
+ */
+export function noShowOutcome(me: string, people: Array<{ userId: string; arrivedAt?: Date | null }>): { targets: string[]; endsMeeting: boolean } {
+  const others = people.filter((p) => p.userId !== me);
+  return { targets: others.filter((p) => !p.arrivedAt).map((p) => p.userId), endsMeeting: others.every((p) => !p.arrivedAt) };
 }

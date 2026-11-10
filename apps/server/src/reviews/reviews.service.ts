@@ -39,9 +39,9 @@ export class ReviewsService {
 
   async submit(userId: string, appointmentId: string, input: ReviewInput): Promise<{ done: true; mutual: boolean }> {
     // 시간이 되어 바뀐 약속 상태(종료 등)를 먼저 반영합니다.
-    await this.appointments.settle({ id: appointmentId, participants: { some: { userId } } });
+    await this.appointments.settle({ id: appointmentId, participants: { some: { userId, leftAt: null } } });
     const a = await this.prisma.appointment.findFirst({
-      where: { id: appointmentId, participants: { some: { userId } } },
+      where: { id: appointmentId, participants: { some: { userId, leftAt: null } } },
       include: { participants: { include: { user: { select: { id: true, nickname: true } } } }, event: { select: { name: true } } },
     });
     if (!a) throw new AppError('NOT_FOUND', '약속을 찾을 수 없어요.');
@@ -54,7 +54,11 @@ export class ReviewsService {
     const problem = checkReviewInput(input);
     if (problem) throw new AppError('REVIEW_INVALID', REVIEW_PROBLEM_MESSAGES[problem], { problem });
 
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    // 후기는 함께한 사람마다 따로 남깁니다. 같은 쪽(일행)끼리, 그리고 중간에 빠진 사람과는 남기지 않습니다. (9-2a)
+    const me = a.participants.find((p) => p.userId === userId)!;
+    const targets = a.participants.filter((p) => !p.leftAt && p.userId !== userId && p.side !== me.side && (!input.targetId || p.userId === input.targetId));
+    if (targets.length !== 1) throw new AppError('REVIEW_INVALID', '누구에 대한 후기인지 골라 주세요.');
+    const other = targets[0];
     // '불편했어요'는 또 같이 가고 싶지 않다는 뜻이고, 추천에서 숨기면 같이 가는 것을 원하지 않는 것으로 봅니다.
     const again = input.overall === 'UNCOMFORTABLE' || input.hideTarget ? 'NO' : input.again;
     try {
@@ -77,16 +81,20 @@ export class ReviewsService {
 
     let mutual = false;
     if (again === 'YES') {
-      const theirs = await this.prisma.review.findUnique({ where: { appointmentId_authorId: { appointmentId, authorId: other.userId } } });
+      const theirs = await this.prisma.review.findUnique({ where: { appointmentId_authorId_targetId: { appointmentId, authorId: other.userId, targetId: userId } } });
       if (theirs?.again === 'YES' && !(await isBlockedBetween(this.prisma, userId, other.userId))) {
         mutual = true;
+        // 둘이 만난 약속이면 채팅이 닫히지 않습니다. 여러 명이 만난 약속의 채팅은 그대로 24시간 뒤 닫힙니다. (정리문서 2장 일행, 사용자 확인)
+        const oneToOne = a.participants.length === 2;
         await this.prisma.$transaction(async (tx) => {
-          // 채팅은 닫히지 않고, 둘 다에게 알립니다. 다음 행사 후보 목록에서는 서로 맨 위에 보입니다.
-          await tx.appointment.update({ where: { id: appointmentId }, data: { chatExtended: true } });
-          await chatSystemLine(tx, appointmentId, CHAT_EXTENDED_LINE, this.clock.now());
-          for (const p of a.participants) {
-            const nick = a.participants.find((x) => x.userId !== p.userId)!.user.nickname ?? '';
-            await this.notifications.notify(tx, p.userId, 'REVIEW_MUTUAL_AGAIN', { nickname: nick, eventName: a.event.name, deadline: formatSeoulShort(deadline) }, { appointmentId });
+          if (oneToOne) {
+            await tx.appointment.update({ where: { id: appointmentId }, data: { chatExtended: true } });
+            await chatSystemLine(tx, appointmentId, CHAT_EXTENDED_LINE, this.clock.now());
+          }
+          // 다음 행사 후보 목록에서는 서로 맨 위에 보입니다. (후기로 계산)
+          for (const p of [me, other]) {
+            const nick = p.userId === me.userId ? (other.user.nickname ?? '') : (me.user.nickname ?? '');
+            await this.notifications.notify(tx, p.userId, 'REVIEW_MUTUAL_AGAIN', { nickname: nick, eventName: a.event.name, deadline: formatSeoulShort(deadline), chatOpen: oneToOne }, { appointmentId });
           }
         });
       }

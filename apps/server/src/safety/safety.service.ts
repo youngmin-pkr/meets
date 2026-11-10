@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   formatSeoulShort,
+  groupName,
   rangeOf,
   shareLinkExpiresAt,
   sharedStatusOf,
@@ -11,6 +12,7 @@ import {
   type SharedAppointmentView,
 } from '@meets/shared';
 import { AppError } from '../common/app-error';
+import { orderedOthers } from '../common/participants';
 import { CLOCK, type Clock } from '../common/clock';
 import { SERVER_CONFIG, type ServerConfig } from '../config';
 import { PolicyService } from '../policy/policy.service';
@@ -85,7 +87,7 @@ export class SafetyService {
     if (!l) return null;
     const a = l.appointment;
     const mine = a.participants.find((p) => p.userId === l.creatorId)!;
-    const other = a.participants.find((p) => p.userId !== l.creatorId)!;
+    const others = orderedOthers(a.participants, l.creatorId);
     const { endsAt } = rangeOf(a.date, a.startTime, a.endTime);
     const basis = a.endedAt && a.endedAt < endsAt ? a.endedAt : endsAt;
     const expiresAt = shareLinkExpiresAt(basis, l.expireHours);
@@ -93,7 +95,7 @@ export class SafetyService {
       eventName: a.event.name,
       when: formatSeoulShort(rangeOf(a.date, a.startTime, a.endTime).startsAt),
       spotName: a.meetingSpotName ?? '',
-      companion: other.user.nickname ?? '',
+      companion: groupName(others.map((p) => p.user.nickname ?? '')),
       status: l.showStatus ? sharedStatusOf(a.status as AppointmentStatus, mine.arrivedAt) : null,
       arrivedAt: l.showStatus && mine.arrivedAt ? mine.arrivedAt.toISOString() : null,
       alert: l.alertKind && l.alertAt ? { kind: l.alertKind as 'HELP' | 'NO_RESPONSE', at: l.alertAt.toISOString() } : null,

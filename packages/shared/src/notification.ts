@@ -33,7 +33,8 @@ export type NotificationKind =
   | 'PARTY_READY'
   | 'PARTY_MEMBER_LEFT'
   | 'PARTY_REMOVED'
-  | 'PARTY_DISBANDED';
+  | 'PARTY_DISBANDED'
+  | 'APPOINTMENT_MEMBER_LEFT';
 
 export interface NotificationParams {
   nickname?: string;
@@ -48,6 +49,10 @@ export interface NotificationParams {
   upheld?: boolean;
   /** 제한이 풀리는 시각 글자 */
   until?: string;
+  /** 확인하지 않아 약속에서 빠진 경우 (다른 사람들은 계속함) */
+  dropped?: boolean;
+  /** 서로 '또 같이 가고 싶어요'일 때 채팅이 계속 열려 있는지 (둘이 만난 약속만) */
+  chatOpen?: boolean;
 }
 
 /** 알림 (앱이 받는 모양) */
@@ -71,8 +76,14 @@ export function formatSeoulShort(at: Date | string): string {
   return `${d.getUTCMonth() + 1}.${d.getUTCDate()} (${WEEKDAYS[d.getUTCDay()]}) ${hm}`;
 }
 
+/** '하늘' → '하늘님', '하늘 외 2명' → '하늘님 외 2명' */
+export function honorific(name: string): string {
+  const i = name.indexOf(' 외 ');
+  return i >= 0 ? `${name.slice(0, i)}님${name.slice(i)}` : `${name}님`;
+}
+
 export function notificationText(kind: NotificationKind, p: NotificationParams): { title: string; body: string } {
-  const nick = `${p.nickname ?? ''}님`;
+  const nick = honorific(p.nickname ?? '');
   const ev = p.eventName ?? '';
   switch (kind) {
     case 'PROPOSAL_RECEIVED':
@@ -90,7 +101,9 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
     case 'NO_CONFIRM_PARTNER':
       return { title: '상대가 확인하지 않아 약속이 취소됐어요', body: `내 신뢰 단계에는 영향이 없어요. ${ev}에 같이 갈 다른 후보를 찾아볼까요?` };
     case 'NO_CONFIRM_SELF':
-      return { title: '확인하지 않아 약속이 취소됐어요', body: `${ev} 약속을 확인 마감까지 확인하지 않았어요.` };
+      return p.dropped
+        ? { title: '확인하지 않아 약속에서 빠졌어요', body: `${ev} 약속을 확인 마감까지 확인하지 않아 빠졌어요. 다른 사람들은 약속을 계속해요.` }
+        : { title: '확인하지 않아 약속이 취소됐어요', body: `${ev} 약속을 확인 마감까지 확인하지 않았어요.` };
     case 'APPOINTMENT_CANCELLED':
       return { title: '약속이 취소됐어요', body: `${nick}이 ${ev} 약속을 취소했어요.${p.reason ? ` 사유: ${p.reason}` : ''}` };
     case 'APPOINTMENT_SOON':
@@ -125,6 +138,13 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return { title: '일행 인원이 바뀌었어요', body: `${nick}이 ${ev} 일행에서 빠졌어요. 남은 사람끼리 계속할 수 있어요.` };
     case 'PARTY_REMOVED':
       return { title: '일행에서 빠졌어요', body: `일정과 스타일 입력이 없어 ${ev} 일행이 입력을 마친 사람들끼리 진행하기로 했어요. 개인으로 같이 갈 사람을 찾아볼 수 있어요.` };
+    case 'APPOINTMENT_MEMBER_LEFT':
+      return {
+        title: '약속에서 한 명이 빠졌어요',
+        body: p.deadline
+          ? `${nick}이 ${ev} 약속에서 빠졌어요. ${p.deadline}까지 이 약속에 갈 수 있는지 다시 확인해 주세요. 확인하지 않으면 보류돼요.`
+          : `${nick}이 ${ev} 약속에서 빠졌어요. 남은 사람끼리 계속해요.`,
+      };
     case 'PARTY_DISBANDED':
       return { title: '일행이 풀렸어요', body: `${ev} 일행이 풀렸어요. 개인으로 같이 갈 사람을 찾아볼 수 있어요.` };
     case 'ADMIN_WARNING':
@@ -132,7 +152,7 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
     case 'ADMIN_RESTRICTION':
       return { title: '운영 안내', body: `신고가 확인되어 ${p.until}까지 제안 보내기와 수락이 제한돼요. 채팅과 이미 만든 약속은 그대로 쓸 수 있어요.` };
     case 'REVIEW_MUTUAL_AGAIN':
-      return { title: '서로 또 같이 가고 싶어 해요', body: `${nick}과 서로 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드리고, 채팅도 계속 열려 있어요.` };
+      return { title: '서로 또 같이 가고 싶어 해요', body: `${nick}과 서로 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드려요.${p.chatOpen === false ? '' : ' 채팅도 계속 열려 있어요.'}` };
   }
 }
 

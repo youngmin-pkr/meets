@@ -37,7 +37,7 @@ export class TrustService {
       // 임박 취소: 약속 24시간 안에 내가 취소한 것
       db.appointmentParticipant.count({ where: { userId, lateCancel: true, cancelledAt: { gte: since } } }),
       // 무응답: 확인 마감까지 확인하지 않아 약속이 취소된 것
-      db.appointmentParticipant.count({ where: { userId, noResponse: true, appointment: { endedAt: { gte: since } } } }),
+      db.appointmentParticipant.count({ where: { userId, noResponse: true, OR: [{ appointment: { endedAt: { gte: since } } }, { leftAt: { gte: since } }] } }),
       // 운영팀이 사실로 확인한 노쇼
       db.appointmentParticipant.count({ where: { userId, noShowConfirmed: true, appointment: { endedAt: { gte: since } } } }),
     ]);

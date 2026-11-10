@@ -21,20 +21,23 @@ export class ReportsService {
     private readonly blocks: BlocksService,
   ) {}
 
-  async create(userId: string, input: { appointmentId: string; category: ReportCategory; detail?: string; alsoBlock: boolean }) {
+  async create(userId: string, input: { appointmentId: string; category: ReportCategory; detail?: string; alsoBlock: boolean; targetId?: string }) {
     const a = await this.prisma.appointment.findFirst({
       where: { id: input.appointmentId, participants: { some: { userId } } },
       include: { participants: true },
     });
     if (!a) throw new AppError('NOT_FOUND', '약속을 찾을 수 없어요.');
-    const target = a.participants.find((p) => p.userId !== userId)!;
+    const candidates = a.participants.filter((p) => p.userId !== userId && (!input.targetId || p.userId === input.targetId));
+    // 여러 명이 만난 약속에서는 누구를 신고하는지 알려 주어야 합니다.
+    if (candidates.length !== 1) throw new AppError('REPORT_INVALID', '신고할 사람을 골라 주세요.');
+    const target = candidates[0];
 
     const max = await this.policy.getNumber('REPORT_DETAIL_MAX_LENGTH');
     const detail = input.detail?.trim() || null;
     if (detail && [...detail].length > max) throw new AppError('REPORT_INVALID', `자세한 내용은 ${max}자까지 적을 수 있어요.`, { max });
 
     const open = await this.prisma.report.findFirst({
-      where: { reporterId: userId, appointmentId: a.id, status: { notIn: ['CLOSED'] } },
+      where: { reporterId: userId, appointmentId: a.id, targetId: target.userId, status: { notIn: ['CLOSED'] } },
       select: { id: true },
     });
     if (open) throw new AppError('REPORT_EXISTS', '이 약속은 이미 신고했어요. 운영팀이 확인하고 있어요.');

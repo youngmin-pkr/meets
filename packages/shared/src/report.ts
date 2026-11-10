@@ -109,6 +109,8 @@ export interface ReportInput {
   detail?: string;
   /** 이 사람을 차단하고 서로 보이지 않게 하기 */
   alsoBlock: boolean;
+  /** 여러 명이 만난 약속에서 누구를 신고하는지. 1:1이면 비워 둡니다 */
+  targetId?: string;
 }
 
 /** 신고 우선순위: 도움 요청이면 가장 앞, 청소년이 걸려 있으면 그다음, 나머지는 일반 */

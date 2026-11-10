@@ -14,6 +14,11 @@ export class BlockDto {
 export class BlockCounterpartDto {
   @IsUUID()
   appointmentId: string;
+
+  /** 여러 명이 만나는 약속에서 누구를 차단하는지 (1:1이면 비움) */
+  @IsOptional()
+  @IsUUID()
+  targetId?: string;
 }
 
 export class ReportDto {
@@ -31,6 +36,11 @@ export class ReportDto {
 
   @IsBoolean()
   alsoBlock: boolean;
+
+  /** 여러 명이 만난 약속에서 누구를 신고하는지 (1:1이면 비움) */
+  @IsOptional()
+  @IsUUID()
+  targetId?: string;
 }
 
 /** 사용자 앱: 차단, 신고 접수, 내 신뢰 단계 */
@@ -58,7 +68,7 @@ export class BlocksController {
   @Post('blocks/from-chat')
   @HttpCode(200)
   blockFromChat(@CurrentUserId() userId: string, @Body() body: BlockCounterpartDto) {
-    return this.blocks.blockCounterpart(userId, body.appointmentId, 'CHAT');
+    return this.blocks.blockCounterpart(userId, body.appointmentId, 'CHAT', body.targetId);
   }
 
   @Delete('blocks/:userId')

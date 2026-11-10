@@ -213,11 +213,14 @@ export class MatchingService {
 
   /** 서로 '또 같이 가고 싶어요'를 골라 채팅이 이어진 사람들 (차단한 사람은 뺌) */
   private async reunionWith(userId: string, blocked: Set<string>): Promise<string[]> {
-    const rows = await this.prisma.appointment.findMany({
-      where: { chatExtended: true, participants: { some: { userId } } },
-      select: { participants: { select: { userId: true } } },
+    // 서로 '또 같이 가고 싶어요'를 고른 사이: 내가 YES를 남긴 사람 중 그 사람도 나에게 YES를 남긴 사람 (한 쌍씩 따로 계산)
+    const mine = await this.prisma.review.findMany({ where: { authorId: userId, again: 'YES' }, select: { appointmentId: true, targetId: true } });
+    if (mine.length === 0) return [];
+    const back = await this.prisma.review.findMany({
+      where: { targetId: userId, again: 'YES', OR: mine.map((m) => ({ appointmentId: m.appointmentId, authorId: m.targetId })) },
+      select: { authorId: true },
     });
-    return [...new Set(rows.flatMap((r) => r.participants.map((p) => p.userId)).filter((id) => id !== userId && !blocked.has(id)))];
+    return [...new Set(back.map((r) => r.authorId).filter((id) => !blocked.has(id)))];
   }
 
   private async context(userId: string, eventId: string) {

@@ -23,7 +23,8 @@ function view(o: Partial<AppointmentView> = {}): AppointmentView {
     actions: { ...noActions, cancel: true },
     needsAction: false,
     unreadMessages: 0,
-    review: { canWrite: false, done: false, deadline: '2026-12-20T08:00:00.000Z' },
+    review: { canWrite: false, done: false, deadline: '2026-12-20T08:00:00.000Z', targets: [] },
+    companions: [],
     safety: { canRequestHelp: false, pendingCheck: null },
     ...o,
   };
@@ -66,7 +67,7 @@ describe('약속 화면 모양', () => {
   });
 
   test('다시 정하기: 바뀐 일정이 없으면 다시 정할 수 없다고 안내', () => {
-    const base = { deadline: '2026-11-09T03:00:00.000Z', mine: false, theirs: false };
+    const base = { deadline: '2026-11-09T03:00:00.000Z', mine: false, theirs: false, reason: 'EVENT_CHANGED' as const };
     expect(appointmentHeadline(view({ status: 'RESCHEDULING', reschedule: { ...base, newSchedule: { date: '2026-12-13', startTime: '16:00', endTime: '17:30' } } })).title).toBe(
       '행사 일정이 바뀌었어요',
     );

@@ -31,7 +31,8 @@ export class SafetyChecksService {
       where: { id: { in: appointmentIds }, status: { in: ['IN_PROGRESS'] } },
       include: {
         event: { select: { name: true } },
-        participants: { include: { user: { select: { id: true, safetyCheckEnabled: true, safetyAlertTrusted: true } } } },
+        // 약속에서 이미 빠진 사람에게는 묻지 않습니다.
+        participants: { where: { leftAt: null }, include: { user: { select: { id: true, safetyCheckEnabled: true, safetyAlertTrusted: true } } } },
         safetyChecks: true,
       },
     });

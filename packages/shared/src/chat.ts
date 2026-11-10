@@ -73,11 +73,15 @@ export interface ChatMessageView {
   createdAt: string;
   /** 내가 '그래도 보낼게요'로 보낸 메시지 (나에게만 표시) */
   flagged: boolean;
+  /** 보낸 사람 별명 (안내 줄이면 null). 여러 명이 있는 채팅에서 누가 보냈는지 보여 줍니다 */
+  senderNickname: string | null;
 }
 
 export interface ChatView {
   appointmentId: string;
   counterpart: Counterpart;
+  /** 채팅에 함께 있는 다른 사람들 (1:1이면 상대 한 명) */
+  companions: Counterpart[];
   event: { id: string; name: string };
   date: string;
   appointmentStatus: AppointmentStatus;
@@ -91,6 +95,8 @@ export interface ChatView {
 export interface ChatSummary {
   appointmentId: string;
   counterpart: Counterpart;
+  /** 채팅에 함께 있는 다른 사람들 (1:1이면 상대 한 명) */
+  companions: Counterpart[];
   event: { id: string; name: string };
   date: string;
   open: boolean;

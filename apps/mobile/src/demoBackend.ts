@@ -863,6 +863,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
 
   function messageView(m: DemoMessage, me: string): ChatMessageView {
     return {
+      senderNickname: m.senderId ? nicknameOf(m.senderId) : null,
       id: m.id,
       seq: m.seq,
       kind: m.kind,
@@ -912,6 +913,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       id: a.id,
       status: a.status,
       counterpart: counterpartOf(other),
+      companions: [{ ...counterpartOf(other), sameSide: false, confirmed: !!theirs.confirmedAt, arrivedAt: theirs.arrivedAt?.toISOString() ?? null }],
       event: { id: a.eventId, name: eventName(a.eventId) },
       day: { id: a.eventDayId, date: a.date, startTime: a.startTime },
       segments: a.segments,
@@ -934,7 +936,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow || !!pendingCheck,
       unreadMessages: unreadOf(a, me),
-      review: reviewStateOf(a, me, t.endsAt),
+      review: reviewStateOf(a, me, t.endsAt, counterpartOf(other)),
       safety: {
         canRequestHelp: canRequestHelp(a.status, now(), { startsAt: t.startsAt, endsAt: t.endsAt }, a.policy.arrivalOpenMinutes),
         pendingCheck: pendingCheck
@@ -945,10 +947,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   }
 
   /** 후기: 정상적으로 끝난 만남만, 끝나고 N일 동안, 한 번만 */
-  function reviewStateOf(a: DemoAppointment, me: string, endsAt: Date) {
+  function reviewStateOf(a: DemoAppointment, me: string, endsAt: Date, other: Counterpart) {
     const deadline = reviewDeadline(endsAt, POLICY_DEFAULTS.REVIEW_WINDOW_DAYS);
     const done = reviews.some((r) => r.appointmentId === a.id && r.authorId === me);
-    return { canWrite: a.status === 'ENDED' && !done && now() < deadline, done, deadline: deadline.toISOString() };
+    const canWrite = a.status === 'ENDED' && !done && now() < deadline;
+    return { canWrite, done, deadline: deadline.toISOString(), targets: canWrite ? [other] : [] };
   }
 
   /** 내 약속 하나 (약속에 없는 사람에게는 '찾을 수 없어요') */
@@ -2007,6 +2010,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
           return {
             appointmentId: a.id,
             counterpart: counterpartOf(a.users.find((u) => u !== user.id)!),
+            companions: [counterpartOf(a.users.find((u) => u !== user.id)!)],
             event: { id: a.eventId, name: eventName(a.eventId) },
             date: a.date,
             open: isChatOpen(chatClosesAtOf(a), now()),
@@ -2027,6 +2031,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       const view: ChatView = {
         appointmentId: a.id,
         counterpart: counterpartOf(a.users.find((u) => u !== user.id)!),
+        companions: [counterpartOf(a.users.find((u) => u !== user.id)!)],
         event: { id: a.eventId, name: eventName(a.eventId) },
         date: a.date,
         appointmentStatus: a.status,
@@ -2057,7 +2062,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     async submitReview(id, input) {
       const { user, a } = myAppointment(id);
       if (a.status !== 'ENDED') throw new ApiError('REVIEW_NOT_ALLOWED', '정상적으로 끝난 만남에만 후기를 남길 수 있어요.');
-      const view = reviewStateOf(a, user.id, factsTimes(factsOf(a)).endsAt);
+      const view = reviewStateOf(a, user.id, factsTimes(factsOf(a)).endsAt, counterpartOf(a.users.find((u) => u !== user.id)!));
       if (view.done) throw new ApiError('REVIEW_EXISTS', '이미 후기를 남겼어요.');
       if (!view.canWrite) throw new ApiError('REVIEW_NOT_ALLOWED', `후기는 만남이 끝나고 ${POLICY_DEFAULTS.REVIEW_WINDOW_DAYS}일 안에 남길 수 있어요.`);
       const problem = checkReviewInput(input);
