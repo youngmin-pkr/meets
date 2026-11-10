@@ -1,6 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   ACTIVE_APPOINTMENT_STATUSES,
+  groupName,
+  noShowOutcome,
+  otherSide,
+  outcomeOfLeaving,
+  type AppointmentCompanion,
+  type AppointmentSide,
+  type RescheduleReason,
   arrivedLine,
   canRequestHelp,
   type HelpResult,
@@ -30,6 +37,7 @@ import {
   type TimeRange,
 } from '@meets/shared';
 import { chatSystemLine, unreadCounts } from '../chat/chat-unread';
+import { orderedOthers } from '../common/participants';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
@@ -47,7 +55,7 @@ const include = {
   participants: { include: { user: userPublic } },
   event: { select: { id: true, name: true } },
   eventDay: { include: { segments: { orderBy: { sortOrder: 'asc' } } } },
-  reviews: { select: { authorId: true } },
+  reviews: { select: { authorId: true, targetId: true } },
   safetyChecks: { select: { id: true, userId: true, seq: true, askedAt: true, answeredAt: true } },
 } satisfies Prisma.AppointmentInclude;
 
@@ -111,6 +119,11 @@ const snapshotOf = (a: Row): Schedule => ({
   segments: a.segmentsSnapshot as unknown as Segment[],
 });
 
+/** 약속에서 아직 빠지지 않은 사람들 */
+const liveOf = (a: Row) => a.participants.filter((p) => !p.leftAt);
+const sideOf = (p: { side: string }) => (p.side === 'B' ? 'B' : 'A') as AppointmentSide;
+const peopleOf = (a: Row) => liveOf(a).map((p) => ({ userId: p.userId, side: sideOf(p), confirmedAt: p.dayBeforeConfirmedAt }));
+
 function factsOf(a: Row): AppointmentFacts {
   return {
     status: a.status as AppointmentStatus,
@@ -119,8 +132,10 @@ function factsOf(a: Row): AppointmentFacts {
     endTime: a.endTime,
     policy: a.policy as unknown as AppointmentPolicy,
     rescheduleDeadline: a.rescheduleDeadline,
-    participants: a.participants.map((p) => ({
+    participants: liveOf(a).map((p) => ({
       userId: p.userId,
+      side: sideOf(p),
+      noShowReportedAt: p.noShowReportedAt,
       confirmedAt: p.dayBeforeConfirmedAt,
       rescheduleConfirmedAt: p.rescheduleConfirmedAt,
       arrivedAt: p.arrivedAt,
@@ -134,8 +149,17 @@ function factsOf(a: Row): AppointmentFacts {
 /** 후기: 정상적으로 끝난 만남만, 끝나고 N일 동안, 한 번만 */
 function reviewState(a: Row, me: string, now: Date, reviewDays: number, endsAt: Date) {
   const deadline = reviewDeadline(endsAt, reviewDays);
-  const done = a.reviews.some((r) => r.authorId === me);
-  return { canWrite: a.status === 'ENDED' && !done && now < deadline, done, deadline: deadline.toISOString() };
+  const mine = a.participants.find((p) => p.userId === me);
+  // 후기는 함께한 사람마다 따로 남깁니다. 같은 쪽(일행)끼리는 남기지 않고, 중간에 빠진 사람과는 남기지 않습니다.
+  const targets = mine && !mine.leftAt ? liveOf(a).filter((p) => p.userId !== me && sideOf(p) !== sideOf(mine)) : [];
+  const pending = targets.filter((t) => !a.reviews.some((r) => r.authorId === me && r.targetId === t.userId));
+  const done = targets.length > 0 && pending.length === 0;
+  return {
+    canWrite: a.status === 'ENDED' && pending.length > 0 && now < deadline,
+    done,
+    deadline: deadline.toISOString(),
+    targets: a.status === 'ENDED' && now < deadline ? pending.map((t) => counterpart(t.user)) : [],
+  };
 }
 
 /**
@@ -167,6 +191,8 @@ export class AppointmentsService {
     p: { id: string; eventId: string; eventDayId: string; meetingSpotId: string; senderId: string; receiverId: string },
     schedule: Schedule,
     meetingSpotName: string,
+    /** 일행으로 제안한 경우 함께하는 사람 전원(제안을 보낸 쪽 A, 받은 쪽 B). 없으면 보낸 사람과 받은 사람 둘 */
+    people?: Array<{ userId: string; side: AppointmentSide }>,
   ) {
     return this.state.create(tx, {
       proposalId: p.id,
@@ -180,7 +206,12 @@ export class AppointmentsService {
       segmentsSnapshot: schedule.segments,
       meetingSpotName,
       policy: { ...(await this.policySnapshot()) },
-      participants: { create: [{ userId: p.senderId }, { userId: p.receiverId }] },
+      participants: {
+        create: people ?? [
+          { userId: p.senderId, side: 'A' },
+          { userId: p.receiverId, side: 'B' },
+        ],
+      },
     });
   }
 
@@ -189,7 +220,7 @@ export class AppointmentsService {
     const rows = await this.prisma.appointment.findMany({
       where: {
         status: { in: ACTIVE_APPOINTMENT_STATUSES },
-        participants: { some: { userId } },
+        participants: { some: { userId, leftAt: null } },
         ...(excludeId ? { id: { not: excludeId } } : {}),
       },
       select: { id: true, date: true, startTime: true, endTime: true },
@@ -260,12 +291,28 @@ export class AppointmentsService {
             where: { appointmentId: a.id, userId: { in: step.noResponseUserIds } },
             data: { noResponse: true },
           });
-          for (const p of a.participants) {
+          for (const p of liveOf(a)) {
             const silent = step.noResponseUserIds.includes(p.userId);
             await this.notifications.notify(tx, p.userId, silent ? 'NO_CONFIRM_SELF' : 'NO_CONFIRM_PARTNER', base, target);
           }
         }).then(async () => {
           // 무응답은 신뢰 단계에 반영됩니다. (정책 값 12)
+          for (const userId of step.noResponseUserIds) await this.trust.recompute(userId);
+        });
+      case 'DROP_NO_CONFIRM':
+        // 확인하지 않은 사람만 빠지고, 확인한 사람들끼리 확정됩니다. (양쪽에 한 명 이상 남을 때, 정리문서 2장 일행)
+        return this.prisma.$transaction(async (tx) => {
+          const dropped = liveOf(a).filter((p) => step.noResponseUserIds.includes(p.userId));
+          const rest = liveOf(a).filter((p) => !step.noResponseUserIds.includes(p.userId));
+          await tx.appointmentParticipant.updateMany({
+            where: { appointmentId: a.id, userId: { in: step.noResponseUserIds }, leftAt: null },
+            data: { leftAt: now, leftReason: 'NO_CONFIRM', noResponse: true },
+          });
+          await this.state.transition(tx, a.id, 'PENDING_CONFIRM', 'CONFIRMED', { confirmedAt: now });
+          const names = groupName(dropped.map((p) => p.user.nickname ?? ''));
+          for (const p of dropped) await this.notifications.notify(tx, p.userId, 'NO_CONFIRM_SELF', { ...base, dropped: true }, target);
+          for (const p of rest) await this.notifications.notify(tx, p.userId, 'APPOINTMENT_MEMBER_LEFT', { nickname: names, eventName: a.event.name }, target);
+        }).then(async () => {
           for (const userId of step.noResponseUserIds) await this.trust.recompute(userId);
         });
       case 'START':
@@ -276,16 +323,16 @@ export class AppointmentsService {
         const deadline = formatSeoulShort(reviewDeadline(t.endsAt, days));
         return this.prisma.$transaction(async (tx) => {
           await this.state.transition(tx, a.id, 'IN_PROGRESS', 'ENDED');
-          for (const p of a.participants) {
-            const other = a.participants.find((x) => x.userId !== p.userId)!;
-            await this.notifications.notify(tx, p.userId, 'REVIEW_REQUEST', { nickname: other.user.nickname ?? '', eventName: a.event.name, deadline }, target);
+          for (const p of liveOf(a)) {
+            const others = orderedOthers(a.participants, p.userId).filter((x) => sideOf(x) !== sideOf(p));
+            await this.notifications.notify(tx, p.userId, 'REVIEW_REQUEST', { nickname: groupName(others.map((x) => x.user.nickname ?? '')), eventName: a.event.name, deadline }, target);
           }
         });
       }
       case 'HOLD':
         return this.prisma.$transaction(async (tx) => {
           await this.state.transition(tx, a.id, 'RESCHEDULING', 'ON_HOLD');
-          for (const p of a.participants) await this.notifications.notify(tx, p.userId, 'APPOINTMENT_ON_HOLD', base, target);
+          for (const p of liveOf(a)) await this.notifications.notify(tx, p.userId, 'APPOINTMENT_ON_HOLD', base, target);
         });
     }
   }
@@ -296,19 +343,41 @@ export class AppointmentsService {
     const f = factsOf(a);
     const t = factsTimes(f);
     const mine = a.participants.find((p) => p.userId === me)!;
-    const other = a.participants.find((p) => p.userId !== me)!;
+    const others = orderedOthers(a.participants, me);
+    // 약속에서 이미 빠진 사람에게는 끝난 약속으로 보입니다.
+    const left = !!mine.leftAt;
     const snap = snapshotOf(a);
-    const ns = a.status === 'RESCHEDULING' ? scheduleOnDay(snap, a.eventDay) : null;
-    const actions = appointmentActions(f, me, now, { newScheduleAvailable: !!ns });
+    const ns = a.status === 'RESCHEDULING' && !left ? scheduleOnDay(snap, a.eventDay) : null;
+    const actions = left
+      ? { confirm: false, reconfirm: false, cancel: false, arrive: false, reportNoShow: false }
+      : appointmentActions(f, me, now, { newScheduleAvailable: !!ns });
     // 도움 요청으로 끝난 약속은 화면에서 이유를 드러내지 않고 '취소'로만 보입니다.
-    const reason = (a.endReason === 'SAFETY' ? 'CANCELLED' : a.endReason) as AppointmentEndReason | null;
-    const pendingCheck = a.status === 'IN_PROGRESS' ? a.safetyChecks.filter((c) => c.userId === me && !c.answeredAt).sort((x, y) => y.seq - x.seq)[0] : undefined;
-    const byMe =
-      reason === 'CANCELLED' ? a.cancelledById === me : reason === 'NO_CONFIRM' ? mine.noResponse : reason === 'NO_SHOW' ? !!mine.noShowReportedAt : false;
+    const stored = left ? (mine.leftReason === 'NO_CONFIRM' ? 'NO_CONFIRM' : 'CANCELLED') : a.endReason === 'SAFETY' ? 'CANCELLED' : a.endReason;
+    const reason = stored as AppointmentEndReason | null;
+    const status: AppointmentStatus = left ? (mine.leftAt! >= t.startsAt ? 'ENDED_EARLY' : 'CANCELLED') : (a.status as AppointmentStatus);
+    const pendingCheck = !left && a.status === 'IN_PROGRESS' ? a.safetyChecks.filter((c) => c.userId === me && !c.answeredAt).sort((x, y) => y.seq - x.seq)[0] : undefined;
+    const byMe = left
+      ? true
+      : reason === 'CANCELLED'
+        ? a.cancelledById === me
+        : reason === 'NO_CONFIRM'
+          ? mine.noResponse
+          : reason === 'NO_SHOW'
+            ? !!mine.noShowReportedAt
+            : false;
+    const companions: AppointmentCompanion[] = others.map((p) => ({
+      ...counterpart(p.user),
+      sameSide: sideOf(p) === sideOf(mine),
+      confirmed: !!p.dayBeforeConfirmedAt,
+      arrivedAt: p.arrivedAt?.toISOString() ?? null,
+    }));
+    // 도착은 '다른 사람 중 가장 먼저 도착한 시각'으로 보여 줍니다. (1:1이면 상대의 도착)
+    const firstArrival = others.map((p) => p.arrivedAt).filter((x): x is Date => !!x).sort((x, y) => x.getTime() - y.getTime())[0];
     return {
       id: a.id,
-      status: a.status as AppointmentStatus,
-      counterpart: counterpart(other.user),
+      status,
+      counterpart: counterpart((others[0] ?? orderedOthers(a.participants, me, { includeLeft: true })[0]).user),
+      companions,
       event: { id: a.event.id, name: a.event.name },
       day: { id: a.eventDayId, date: a.date, startTime: a.startTime },
       segments: snap.segments,
@@ -320,17 +389,18 @@ export class AppointmentsService {
         opensAt: t.opensAt.toISOString(),
         deadline: t.deadline.toISOString(),
         mine: !!mine.dayBeforeConfirmedAt,
-        theirs: !!other.dayBeforeConfirmedAt,
+        theirs: others.length > 0 && others.every((p) => !!p.dayBeforeConfirmedAt),
       },
-      arrival: { mine: mine.arrivedAt?.toISOString() ?? null, theirs: other.arrivedAt?.toISOString() ?? null },
+      arrival: { mine: mine.arrivedAt?.toISOString() ?? null, theirs: firstArrival?.toISOString() ?? null },
       freeCancelUntil: freeCancelUntil(a.date, a.startTime, f.policy).toISOString(),
       reschedule:
-        (a.status === 'RESCHEDULING' || a.status === 'ON_HOLD') && a.rescheduleDeadline
+        !left && (a.status === 'RESCHEDULING' || a.status === 'ON_HOLD') && a.rescheduleDeadline
           ? {
               deadline: a.rescheduleDeadline.toISOString(),
               mine: !!mine.rescheduleConfirmedAt,
-              theirs: !!other.rescheduleConfirmedAt,
+              theirs: others.length > 0 && others.every((p) => !!p.rescheduleConfirmedAt),
               newSchedule: ns && { date: ns.date, startTime: ns.startTime, endTime: ns.endTime },
+              reason: (a.rescheduleReason === 'MEMBERS_CHANGED' ? 'MEMBERS_CHANGED' : 'EVENT_CHANGED') as RescheduleReason,
             }
           : null,
       end: reason
@@ -338,15 +408,15 @@ export class AppointmentsService {
             reason,
             byMe,
             cancelReason: a.cancelReason ? (CANCEL_REASONS[a.cancelReason as CancelReason] ?? null) : null,
-            late: reason === 'CANCELLED' && a.cancelledById === me && mine.lateCancel === true,
+            late: reason === 'CANCELLED' && (left || a.cancelledById === me) && mine.lateCancel === true,
           }
         : null,
       actions,
       needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow || !!pendingCheck,
       unreadMessages,
-      review: reviewState(a, me, now, reviewDays, t.endsAt),
+      review: left ? { canWrite: false, done: false, deadline: reviewDeadline(t.endsAt, reviewDays).toISOString(), targets: [] } : reviewState(a, me, now, reviewDays, t.endsAt),
       safety: {
-        canRequestHelp: canRequestHelp(a.status as AppointmentStatus, now, { startsAt: t.startsAt, endsAt: t.endsAt }, f.policy.arrivalOpenMinutes),
+        canRequestHelp: !left && canRequestHelp(a.status as AppointmentStatus, now, { startsAt: t.startsAt, endsAt: t.endsAt }, f.policy.arrivalOpenMinutes),
         pendingCheck: pendingCheck
           ? { id: pendingCheck.id, askedAt: pendingCheck.askedAt.toISOString(), minutesSinceStart: Math.max(0, Math.floor((now.getTime() - t.startsAt.getTime()) / 60000)) }
           : null,
@@ -399,7 +469,7 @@ export class AppointmentsService {
     const a = await this.load(userId, id);
     const now = this.clock.now();
     const f = factsOf(a);
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    const others = liveOf(a).filter((p) => p.userId !== userId);
     const target = { appointmentId: a.id };
 
     if (a.status === 'PENDING_CONFIRM') {
@@ -418,19 +488,21 @@ export class AppointmentsService {
       await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, a.id);
         await tx.appointmentParticipant.updateMany({
-          where: { appointmentId: a.id, userId, dayBeforeConfirmedAt: null },
+          where: { appointmentId: a.id, userId, leftAt: null, dayBeforeConfirmedAt: null },
           data: { dayBeforeConfirmedAt: now },
         });
-        const confirmed = await tx.appointmentParticipant.count({ where: { appointmentId: a.id, dayBeforeConfirmedAt: { not: null } } });
-        if (confirmed === a.participants.length) {
+        const confirmed = await tx.appointmentParticipant.count({ where: { appointmentId: a.id, leftAt: null, dayBeforeConfirmedAt: { not: null } } });
+        if (confirmed === liveOf(a).length) {
           await this.state.transition(tx, a.id, 'PENDING_CONFIRM', 'CONFIRMED', { confirmedAt: now });
-          await this.notifications.notify(
-            tx,
-            other.userId,
-            'APPOINTMENT_CONFIRMED',
-            { nickname: this.nickname(a, userId), when: formatSeoulShort(t.startsAt), spotName: a.meetingSpotName },
-            target,
-          );
+          for (const o of others) {
+            await this.notifications.notify(
+              tx,
+              o.userId,
+              'APPOINTMENT_CONFIRMED',
+              { nickname: this.nickname(a, userId), when: formatSeoulShort(t.startsAt), spotName: a.meetingSpotName },
+              target,
+            );
+          }
         }
       });
       return this.get(userId, id);
@@ -456,12 +528,12 @@ export class AppointmentsService {
       await this.prisma.$transaction(async (tx) => {
         await this.lock(tx, a.id);
         await tx.appointmentParticipant.updateMany({
-          where: { appointmentId: a.id, userId, rescheduleConfirmedAt: null },
+          where: { appointmentId: a.id, userId, leftAt: null, rescheduleConfirmedAt: null },
           data: { rescheduleConfirmedAt: now },
         });
-        const confirmed = await tx.appointmentParticipant.count({ where: { appointmentId: a.id, rescheduleConfirmedAt: { not: null } } });
-        if (confirmed === a.participants.length) {
-          // 둘 다 확인하면 바뀐 일정으로 확정
+        const confirmed = await tx.appointmentParticipant.count({ where: { appointmentId: a.id, leftAt: null, rescheduleConfirmedAt: { not: null } } });
+        if (confirmed === liveOf(a).length) {
+          // 모두 확인하면 바뀐 일정으로 확정
           await this.state.transition(tx, a.id, 'RESCHEDULING', 'CONFIRMED', {
             date: ns.date,
             startTime: ns.startTime,
@@ -472,13 +544,15 @@ export class AppointmentsService {
             rescheduleDeadline: null,
           });
           await tx.appointmentParticipant.updateMany({ where: { appointmentId: a.id }, data: { soonNotifiedAt: null } });
-          await this.notifications.notify(
-            tx,
-            other.userId,
-            'APPOINTMENT_CONFIRMED',
-            { nickname: this.nickname(a, userId), when: formatSeoulShort(seoulDateTime(ns.date, ns.startTime)), spotName: a.meetingSpotName },
-            target,
-          );
+          for (const o of others) {
+            await this.notifications.notify(
+              tx,
+              o.userId,
+              'APPOINTMENT_CONFIRMED',
+              { nickname: this.nickname(a, userId), when: formatSeoulShort(seoulDateTime(ns.date, ns.startTime)), spotName: a.meetingSpotName },
+              target,
+            );
+          }
         }
       });
       return this.get(userId, id);
@@ -487,7 +561,70 @@ export class AppointmentsService {
     throw new AppError('APPOINTMENT_STATE', '지금은 확인할 수 없는 약속이에요.', { status: a.status });
   }
 
-  /** 약속 취소. 약속 24시간 전이 지나면 '임박 취소'로 기록합니다. (신뢰 단계 반영은 7단계) */
+  /**
+   * 약속에서 한 사람이 빠집니다. (취소·도움 요청·차단·이용 정지에서 함께 씀, 같은 트랜잭션 안)
+   * - 빠지는 사람의 쪽에 아무도 남지 않으면 약속이 끝납니다. (취소, 만남 중이면 중간 종료)
+   * - 아니면 남은 사람끼리 계속하고, 확정된 약속이면 상대 쪽이 다시 확인합니다. (다시 정하기, 사유 '인원 변경')
+   * 돌려주는 값: 약속이 통째로 끝났는지
+   */
+  private async leaveInternal(
+    tx: Prisma.TransactionClient,
+    a: Row,
+    userId: string,
+    why: { reason: 'CANCEL' | 'SAFETY' | 'BLOCK' | 'SUSPENDED'; cancelReason?: CancelReason | null; late?: boolean; notifyEnded: (others: Row['participants']) => Promise<void> },
+  ): Promise<{ ended: boolean }> {
+    const now = this.clock.now();
+    const status = a.status as AppointmentStatus;
+    const outcome = outcomeOfLeaving(status, peopleOf(a), userId);
+    const others = liveOf(a).filter((p) => p.userId !== userId);
+    // 약속이 통째로 끝나면 모두가 그대로 참여자로 남고(끝난 약속으로 보임), 계속되면 이 사람만 '빠진 사람'이 됩니다.
+    const marked = await tx.appointmentParticipant.updateMany({
+      where: { appointmentId: a.id, userId, leftAt: null },
+      data: { cancelledAt: now, lateCancel: why.late ?? false, ...(outcome.kind === 'CONTINUE' ? { leftAt: now, leftReason: why.reason } : {}) },
+    });
+    if (marked.count !== 1) throw new AppError('APPOINTMENT_STATE', '약속 상태가 그사이 바뀌었어요. 새로고침해 주세요.');
+
+    if (outcome.kind === 'CANCEL_ALL') {
+      const to: AppointmentStatus = status === 'IN_PROGRESS' || why.reason === 'SAFETY' ? 'ENDED_EARLY' : 'CANCELLED';
+      await this.state.transition(tx, a.id, status, to, {
+        endReason: (why.reason === 'SAFETY' ? 'SAFETY' : 'CANCELLED') as string,
+        cancelledById: userId,
+        cancelReason: why.cancelReason ?? null,
+      });
+      await why.notifyEnded(others);
+      return { ended: true };
+    }
+
+    const names = groupName([a.participants.find((p) => p.userId === userId)?.user.nickname ?? '']);
+    let deadlineText: string | undefined;
+    if (outcome.reconfirmSide) {
+      // 확정된 약속에서 한 명이 빠지면 상대 쪽이 다시 확인합니다. 같은 쪽 사람들은 이미 아는 일이라 확인한 것으로 둡니다.
+      const p = await this.policy.getNumbers(['RESCHEDULE_DEADLINE_HOURS', 'RESCHEDULE_EVENT_CUTOFF_HOURS']);
+      const startsAt = seoulDateTime(a.date, a.startTime);
+      // 일정이 바뀐 것이 아니라서 약속 시작 때까지 다시 확인할 시간을 줍니다. (행사 일정 변경 때의 '12시간 전' 여유는 두지 않음)
+      const deadline = new Date(Math.min(now.getTime() + p.RESCHEDULE_DEADLINE_HOURS * 3600 * 1000, startsAt.getTime()));
+      await this.state.transition(tx, a.id, 'CONFIRMED', 'RESCHEDULING', { rescheduleDeadline: deadline, rescheduleReason: 'MEMBERS_CHANGED' });
+      await tx.appointmentParticipant.updateMany({
+        where: { appointmentId: a.id, leftAt: null, side: outcome.reconfirmSide },
+        data: { rescheduleConfirmedAt: null },
+      });
+      await tx.appointmentParticipant.updateMany({
+        where: { appointmentId: a.id, leftAt: null, side: otherSide(outcome.reconfirmSide) },
+        data: { rescheduleConfirmedAt: now },
+      });
+      deadlineText = formatSeoulShort(deadline);
+    } else if (outcome.becomesConfirmed) {
+      await this.state.transition(tx, a.id, 'PENDING_CONFIRM', 'CONFIRMED', { confirmedAt: now });
+    }
+    for (const o of others) {
+      // 다시 확인해야 하는 쪽에게만 기한을 안내합니다.
+      const ask = !!outcome.reconfirmSide && sideOf(o) === outcome.reconfirmSide;
+      await this.notifications.notify(tx, o.userId, 'APPOINTMENT_MEMBER_LEFT', { nickname: names, eventName: a.event.name, ...(ask ? { deadline: deadlineText } : {}) }, { appointmentId: a.id });
+    }
+    return { ended: false };
+  }
+
+  /** 약속 취소(여러 명이면 이 약속에서 빠지기). 약속 24시간 전이 지나면 '임박 취소'로 기록합니다. (신뢰 단계 반영은 7단계) */
   async cancel(userId: string, id: string, reason?: CancelReason): Promise<AppointmentView> {
     await this.settle({ id });
     const a = await this.load(userId, id);
@@ -497,24 +634,24 @@ export class AppointmentsService {
       throw new AppError('APPOINTMENT_STATE', '지금은 취소할 수 없는 약속이에요.', { status: a.status });
     }
     const late = now >= freeCancelUntil(a.date, a.startTime, f.policy);
-    const other = a.participants.find((p) => p.userId !== userId)!;
     await this.prisma.$transaction(async (tx) => {
-      await this.state.transition(tx, a.id, a.status as AppointmentStatus, 'CANCELLED', {
-        endReason: 'CANCELLED' satisfies AppointmentEndReason,
-        cancelledById: userId,
+      await this.lock(tx, a.id);
+      await this.leaveInternal(tx, a, userId, {
+        reason: 'CANCEL',
         cancelReason: reason ?? null,
+        late,
+        notifyEnded: async (others) => {
+          for (const o of others) {
+            await this.notifications.notify(
+              tx,
+              o.userId,
+              'APPOINTMENT_CANCELLED',
+              { nickname: this.nickname(a, userId), eventName: a.event.name, reason: reason ? CANCEL_REASONS[reason] : null },
+              { appointmentId: a.id },
+            );
+          }
+        },
       });
-      await tx.appointmentParticipant.update({
-        where: { appointmentId_userId: { appointmentId: a.id, userId } },
-        data: { cancelledAt: now, lateCancel: late },
-      });
-      await this.notifications.notify(
-        tx,
-        other.userId,
-        'APPOINTMENT_CANCELLED',
-        { nickname: this.nickname(a, userId), eventName: a.event.name, reason: reason ? CANCEL_REASONS[reason] : null },
-        { appointmentId: a.id },
-      );
     });
     // 임박 취소는 신뢰 단계에 반영됩니다. (정책 값 12)
     if (late) await this.trust.recompute(userId);
@@ -529,20 +666,23 @@ export class AppointmentsService {
     if (!appointmentActions(factsOf(a), userId, now, { newScheduleAvailable: false }).arrive) {
       throw new AppError('APPOINTMENT_NOT_NOW', '약속 시간이 가까워지면 누를 수 있어요.');
     }
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    const others = liveOf(a).filter((p) => p.userId !== userId);
     await this.prisma.$transaction(async (tx) => {
-      const marked = await tx.appointmentParticipant.updateMany({ where: { appointmentId: a.id, userId, arrivedAt: null }, data: { arrivedAt: now } });
+      const marked = await tx.appointmentParticipant.updateMany({ where: { appointmentId: a.id, userId, leftAt: null, arrivedAt: null }, data: { arrivedAt: now } });
       if (marked.count === 1) {
         await chatSystemLine(tx, a.id, arrivedLine(this.nickname(a, userId)), now);
-        await this.notifications.notify(tx, other.userId, 'PARTNER_ARRIVED', { nickname: this.nickname(a, userId), spotName: a.meetingSpotName }, { appointmentId: a.id });
+        for (const o of others) {
+          await this.notifications.notify(tx, o.userId, 'PARTNER_ARRIVED', { nickname: this.nickname(a, userId), spotName: a.meetingSpotName }, { appointmentId: a.id });
+        }
       }
     });
     return this.get(userId, id);
   }
 
   /**
-   * '안 나왔어요'. 내 도착 기록이 있고 상대 기록이 없을 때, 약속 15분 뒤부터.
-   * 바로 노쇼로 확정하지 않고 양쪽 도착 기록을 남겨 두며, 판단은 운영팀의 신고 처리에서 합니다.
+   * '안 나왔어요'. 내 도착 기록이 있고 도착하지 않은 사람이 있을 때, 약속 15분 뒤부터.
+   * 바로 노쇼로 확정하지 않고 도착 기록을 남겨 두며, 판단은 운영팀의 신고 처리에서 합니다.
+   * 여러 명이 만나는 약속에서는 도착하지 않은 사람마다 신고가 접수되고, 다른 사람이 아무도 도착하지 않았을 때만 만남이 끝납니다.
    */
   async reportNoShow(userId: string, id: string): Promise<AppointmentView> {
     await this.settle({ id });
@@ -551,16 +691,24 @@ export class AppointmentsService {
     if (!appointmentActions(factsOf(a), userId, now, { newScheduleAvailable: false }).reportNoShow) {
       throw new AppError('APPOINTMENT_NOT_NOW', "지금은 '안 나왔어요'를 누를 수 없어요.");
     }
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    const outcome = noShowOutcome(userId, liveOf(a).map((p) => ({ userId: p.userId, arrivedAt: p.arrivedAt })));
     await this.prisma.$transaction(async (tx) => {
-      await this.state.transition(tx, a.id, 'IN_PROGRESS', 'ENDED_EARLY', { endReason: 'NO_SHOW' satisfies AppointmentEndReason });
-      await tx.appointmentParticipant.update({
-        where: { appointmentId_userId: { appointmentId: a.id, userId } },
+      await this.lock(tx, a.id);
+      const marked = await tx.appointmentParticipant.updateMany({
+        where: { appointmentId: a.id, userId, leftAt: null, noShowReportedAt: null },
         data: { noShowReportedAt: now },
       });
-      await this.notifications.notify(tx, other.userId, 'APPOINTMENT_ENDED_EARLY', { eventName: a.event.name }, { appointmentId: a.id });
-      // 바로 노쇼로 정하지 않고, 양쪽 도착 기록을 운영팀이 함께 보고 판단하도록 신고 대기열에 올립니다. (정리문서 2장 약속)
-      await this.reports.createQueued(tx, { reporterId: userId, targetId: other.userId, appointmentId: a.id, category: 'NO_SHOW', detail: null });
+      if (marked.count !== 1) throw new AppError('APPOINTMENT_STATE', '이미 눌렀어요.');
+      if (outcome.endsMeeting) {
+        await this.state.transition(tx, a.id, 'IN_PROGRESS', 'ENDED_EARLY', { endReason: 'NO_SHOW' satisfies AppointmentEndReason });
+        for (const o of liveOf(a).filter((p) => p.userId !== userId)) {
+          await this.notifications.notify(tx, o.userId, 'APPOINTMENT_ENDED_EARLY', { eventName: a.event.name }, { appointmentId: a.id });
+        }
+      }
+      // 바로 노쇼로 정하지 않고, 도착 기록을 운영팀이 함께 보고 판단하도록 신고 대기열에 올립니다. (정리문서 2장 약속)
+      for (const target of outcome.targets) {
+        await this.reports.createQueued(tx, { reporterId: userId, targetId: target, appointmentId: a.id, category: 'NO_SHOW', detail: null });
+      }
     });
     return this.get(userId, id);
   }
@@ -580,18 +728,31 @@ export class AppointmentsService {
     if (!canRequestHelp(a.status as AppointmentStatus, now, t, factsOf(a).policy.arrivalOpenMinutes)) {
       throw new AppError('SAFETY_NOT_NOW', '지금은 도움 요청을 쓸 수 없어요. 나중에 문제가 있었다면 신고로 알려 주세요.');
     }
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    const mine = a.participants.find((p) => p.userId === userId)!;
+    if (mine.leftAt) throw new AppError('SAFETY_NOT_NOW', '이미 이 약속에서 빠졌어요.');
+    // 신고는 상대 쪽(일행이 아닌 쪽) 사람 모두에게 접수합니다. (1:1이면 상대 한 명)
+    const targets = liveOf(a).filter((p) => sideOf(p) !== sideOf(mine));
     const me = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { safetyAlertTrusted: true } });
+    let ended = true;
     await this.prisma.$transaction(async (tx) => {
       await this.lock(tx, a.id);
-      await this.state.transition(tx, a.id, a.status as AppointmentStatus, 'ENDED_EARLY', {
-        endReason: 'SAFETY' satisfies 'SAFETY',
-        cancelledById: userId,
+      // 일행이 있으면 누른 사람만 빠지고 나머지는 계속합니다. 쪽이 비면 약속이 끝나고 채팅이 닫힙니다.
+      const result = await this.leaveInternal(tx, a, userId, {
+        reason: 'SAFETY',
+        late: false,
+        notifyEnded: async (others) => {
+          for (const o of others) {
+            await this.notifications.notify(
+              tx,
+              o.userId,
+              'APPOINTMENT_CANCELLED',
+              { nickname: this.nickname(a, userId), eventName: a.event.name, reason: null },
+              { appointmentId: a.id },
+            );
+          }
+        },
       });
-      await tx.appointmentParticipant.update({
-        where: { appointmentId_userId: { appointmentId: a.id, userId } },
-        data: { cancelledAt: now, lateCancel: false },
-      });
+      ended = result.ended;
       await tx.safetyCheck.updateMany({
         where: { appointmentId: a.id, userId, answeredAt: null },
         data: { answeredAt: now, answer: 'HELP' },
@@ -602,19 +763,15 @@ export class AppointmentsService {
           data: { alertKind: 'HELP', alertAt: now },
         });
       }
-      await this.notifications.notify(
-        tx,
-        other.userId,
-        'APPOINTMENT_CANCELLED',
-        { nickname: this.nickname(a, userId), eventName: a.event.name, reason: null },
-        { appointmentId: a.id },
-      );
-      await this.reports.createQueued(
-        tx,
-        { reporterId: userId, targetId: other.userId, appointmentId: a.id, category: 'HELP_REQUEST', detail: null },
-        { help: true },
-      );
+      for (const target of targets) {
+        await this.reports.createQueued(
+          tx,
+          { reporterId: userId, targetId: target.userId, appointmentId: a.id, category: 'HELP_REQUEST', detail: null },
+          { help: true },
+        );
+      }
     });
+    void ended;
     return { ended: true, reported: true, trustedNotified: me.safetyAlertTrusted };
   }
 
@@ -683,13 +840,13 @@ export class AppointmentsService {
   }
 
   /**
-   * 차단하면 둘 사이의 진행 중인 약속을 끝냅니다. (같은 트랜잭션 안)
+   * 차단하면 둘이 함께하는 진행 중인 약속에서 차단한 사람이 빠집니다. (같은 트랜잭션 안)
+   * 1:1이면 약속이 끝나고(만남 중이면 '중간 종료'), 여러 명이면 남은 사람끼리 계속합니다. 쪽이 비면 끝납니다.
    * 차단한 사람에게는 임박 취소 기록을 남기지 않고, 상대에게는 이유 없이 '약속이 취소됐어요'만 알립니다. (2026-11-09 사용자 확인)
-   * 만남 중이면 '중간 종료'로 끝납니다.
    */
   async endForBlock(tx: Prisma.TransactionClient, blockerId: string, otherId: string) {
-    return this.endEach(tx, blockerId, {
-      AND: [{ participants: { some: { userId: blockerId } } }, { participants: { some: { userId: otherId } } }],
+    return this.endEach(tx, blockerId, 'BLOCK', {
+      AND: [{ participants: { some: { userId: blockerId, leftAt: null } } }, { participants: { some: { userId: otherId, leftAt: null } } }],
     });
   }
 
@@ -698,30 +855,31 @@ export class AppointmentsService {
    * 정지된 사람에게는 임박 취소 기록을 남기지 않습니다. (이미 다른 제재를 받았으므로)
    */
   async endForSuspension(tx: Prisma.TransactionClient, userId: string) {
-    return this.endEach(tx, userId, { participants: { some: { userId } } });
+    return this.endEach(tx, userId, 'SUSPENDED', { participants: { some: { userId, leftAt: null } } });
   }
 
-  private async endEach(tx: Prisma.TransactionClient, byUserId: string, where: Prisma.AppointmentWhereInput) {
-    const now = this.clock.now();
+  /**
+   * 차단하거나 이용 정지된 사람이 진행 중인 약속에서 빠집니다. (여러 명이 만나는 약속이면 남은 사람끼리 계속,
+   * 그 사람의 쪽이 비면 약속이 끝남) 임박 취소 기록은 남기지 않습니다.
+   */
+  private async endEach(tx: Prisma.TransactionClient, byUserId: string, reason: 'BLOCK' | 'SUSPENDED', where: Prisma.AppointmentWhereInput) {
     const rows = await tx.appointment.findMany({ where: { ...where, status: { in: ENDABLE } }, include });
     for (const a of rows) {
-      const to: AppointmentStatus = a.status === 'IN_PROGRESS' ? 'ENDED_EARLY' : 'CANCELLED';
-      await this.state.transition(tx, a.id, a.status as AppointmentStatus, to, {
-        endReason: 'CANCELLED' satisfies AppointmentEndReason,
-        cancelledById: byUserId,
+      await this.leaveInternal(tx, a, byUserId, {
+        reason,
+        late: false,
+        notifyEnded: async (others) => {
+          for (const o of others) {
+            await this.notifications.notify(
+              tx,
+              o.userId,
+              'APPOINTMENT_CANCELLED',
+              { nickname: this.nickname(a, byUserId), eventName: a.event.name, reason: null },
+              { appointmentId: a.id },
+            );
+          }
+        },
       });
-      await tx.appointmentParticipant.update({
-        where: { appointmentId_userId: { appointmentId: a.id, userId: byUserId } },
-        data: { cancelledAt: now, lateCancel: false },
-      });
-      const other = a.participants.find((p) => p.userId !== byUserId)!;
-      await this.notifications.notify(
-        tx,
-        other.userId,
-        'APPOINTMENT_CANCELLED',
-        { nickname: this.nickname(a, byUserId), eventName: a.event.name, reason: null },
-        { appointmentId: a.id },
-      );
     }
     return rows.length;
   }
@@ -733,7 +891,7 @@ export class AppointmentsService {
       await this.state.transition(tx, a.id, a.status as AppointmentStatus, 'AUTO_ENDED', {
         endReason: 'EVENT_CANCELLED' satisfies AppointmentEndReason,
       });
-      for (const u of a.participants) {
+      for (const u of liveOf(a)) {
         await this.notifications.notify(tx, u.userId, 'EVENT_CANCELLED', { eventName: a.event.name }, { appointmentId: a.id });
       }
     }

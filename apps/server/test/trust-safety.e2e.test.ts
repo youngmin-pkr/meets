@@ -53,7 +53,8 @@ describe('후기', () => {
     expect(await kinds(b)).toContain('REVIEW_REQUEST');
     const body = (await appt(a, id).expect(200)).body;
     expect(body.status).toBe('ENDED');
-    expect(body.review).toEqual({ canWrite: true, done: false, deadline: kst('2026-12-19T17:00:00').toISOString() });
+    expect(body.review).toMatchObject({ canWrite: true, done: false, deadline: kst('2026-12-19T17:00:00').toISOString() });
+    expect(body.review.targets.map((t: { userId: string }) => t.userId)).toEqual([b.userId]);
     const note = (await http(app).get('/me/notifications').set(auth(a.token))).body.items.find((n: { kind: string }) => n.kind === 'REVIEW_REQUEST');
     expect(note.body).toContain('12.19 (토) 17:00까지 후기를 남겨 주세요');
   });

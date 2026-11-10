@@ -13,6 +13,7 @@ import {
   type Counterpart,
 } from '@meets/shared';
 import { AppointmentsService } from '../appointments/appointments.service';
+import { orderedOthers } from '../common/participants';
 import { isBlockedBetween } from '../blocks/block-queries';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
@@ -62,21 +63,25 @@ export class ChatService {
   /** 차단 관계인 두 사람의 채팅은 닫힙니다. (지난 대화는 읽을 수 있음) */
   private async closesAtWithBlock(a: Parameters<ChatService['closesAtOf']>[0] & { participants: Array<{ userId: string }> }) {
     const closes = await this.closesAtOf(a);
-    const [x, y] = a.participants.map((p) => p.userId);
-    return (await isBlockedBetween(this.prisma, x, y)) ? this.clock.now() : closes;
+    // 둘이 만나는 약속에서만 확인합니다. (여러 명이 만나는 약속에서는 차단한 사람이 약속에서 빠지므로 서로 차단한 사람이 함께 남지 않습니다)
+    const live = a.participants.filter((p) => !(p as { leftAt?: Date | null }).leftAt);
+    if (live.length !== 2) return closes;
+    return (await isBlockedBetween(this.prisma, live[0].userId, live[1].userId)) ? this.clock.now() : closes;
   }
 
   private async room(userId: string, appointmentId: string) {
     // 시간이 되어 바뀐 약속 상태(종료 등)를 먼저 반영합니다.
-    await this.appointments.settle({ id: appointmentId, participants: { some: { userId } } });
-    const a = await this.prisma.appointment.findFirst({ where: { id: appointmentId, participants: { some: { userId } } }, include: roomInclude });
+    await this.appointments.settle({ id: appointmentId, participants: { some: { userId, leftAt: null } } });
+    // 약속에서 빠진 사람은 더 이상 이 채팅을 읽거나 보낼 수 없습니다.
+    const a = await this.prisma.appointment.findFirst({ where: { id: appointmentId, participants: { some: { userId, leftAt: null } } }, include: roomInclude });
     if (!a) throw new AppError('NOT_FOUND', '채팅을 찾을 수 없어요.');
     const closesAt = await this.closesAtWithBlock(a);
     return { a, closesAt, open: isChatOpen(closesAt, this.clock.now()) };
   }
 
-  private toMessage(m: Message, me: string): ChatMessageView {
+  private toMessage(m: Message, me: string, names: Map<string, string> = new Map()): ChatMessageView {
     return {
+      senderNickname: m.senderId ? (names.get(m.senderId) ?? null) : null,
       id: m.id,
       seq: m.seq,
       kind: m.kind as 'TEXT' | 'SYSTEM',
@@ -103,16 +108,18 @@ export class ChatService {
         update: { lastReadSeq: { set: last.seq } },
       });
     }
-    const other = a.participants.find((p) => p.userId !== userId)!;
+    const names = new Map(a.participants.map((p) => [p.userId, p.user.nickname ?? '']));
+    const others = orderedOthers(a.participants, userId);
     return {
       appointmentId,
-      counterpart: counterpart(other.user),
+      counterpart: counterpart((others[0] ?? a.participants.find((p) => p.userId !== userId)!).user),
+      companions: others.map((p) => counterpart(p.user)),
       event: a.event,
       date: a.date,
       appointmentStatus: a.status as AppointmentStatus,
       closesAt: closesAt?.toISOString() ?? null,
       open,
-      messages: messages.map((m) => this.toMessage(m, userId)),
+      messages: messages.map((m) => this.toMessage(m, userId, names)),
     };
   }
 
@@ -120,7 +127,7 @@ export class ChatService {
    * 메시지 보내기. 연락처·SNS가 있으면 멈추고(CONTACT_DETECTED), 사용자가 '그래도 보낼게요'를 고르면 기록과 함께 보냅니다.
    */
   async send(userId: string, appointmentId: string, body: string, confirmContact: boolean): Promise<ChatMessageView> {
-    const { open } = await this.room(userId, appointmentId);
+    const { a, open } = await this.room(userId, appointmentId);
     if (!open) throw new AppError('CHAT_CLOSED', '채팅이 닫혀서 더 보낼 수 없어요.');
     const max = await this.policy.getNumber('CHAT_MESSAGE_MAX_LENGTH');
     const problem = checkChatBody(body, max);
@@ -150,14 +157,14 @@ export class ChatService {
       create: { appointmentId, userId, lastReadSeq: created.seq },
       update: { lastReadSeq: { set: created.seq } },
     });
-    return this.toMessage(created, userId);
+    return this.toMessage(created, userId, new Map(a.participants.map((p) => [p.userId, p.user.nickname ?? ''])));
   }
 
   /** 내 대화 목록 (열린 대화 먼저, 최근 순) */
   async list(userId: string): Promise<ChatSummary[]> {
     await this.appointments.settleForUser(userId);
     const rows = await this.prisma.appointment.findMany({
-      where: { participants: { some: { userId } } },
+      where: { participants: { some: { userId, leftAt: null } } },
       include: { ...roomInclude, chatMessages: { orderBy: { seq: 'desc' }, take: 1 } },
       take: 100,
     });
@@ -166,10 +173,11 @@ export class ChatService {
     const list = await Promise.all(
       rows.map(async (a) => {
         const last = a.chatMessages[0];
-        const other = a.participants.find((p) => p.userId !== userId)!;
+        const others = orderedOthers(a.participants, userId);
         return {
           appointmentId: a.id,
-          counterpart: counterpart(other.user),
+          counterpart: counterpart((others[0] ?? a.participants.find((p) => p.userId !== userId)!).user),
+          companions: others.map((p) => counterpart(p.user)),
           event: a.event,
           date: a.date,
           open: isChatOpen(await this.closesAtWithBlock(a), now),

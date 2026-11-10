@@ -52,6 +52,8 @@ export interface ReviewInput {
   again: ReviewAgain;
   /** '앞으로 이 사람이 추천에 나오지 않게 해 주세요' (차단과 같음) */
   hideTarget: boolean;
+  /** 여러 명이 만난 약속에서 누구에 대한 후기인지. 1:1이면 비워 둡니다 */
+  targetId?: string;
 }
 
 export type ReviewProblem = 'OVERALL' | 'GOOD_TAGS' | 'BAD_TAGS' | 'AGAIN';

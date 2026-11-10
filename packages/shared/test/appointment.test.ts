@@ -1,4 +1,9 @@
 import {
+  groupName,
+  noShowOutcome,
+  outcomeOfLeaving,
+  sidesRemain,
+  honorific,
   APPOINTMENT_STATUSES,
   appointmentActions,
   appointmentWindow,
@@ -312,5 +317,110 @@ describe('채팅이 닫히는 시각', () => {
     expect(checkChatBody('가'.repeat(500), 500)).toBeNull();
     expect(checkChatBody('가'.repeat(501), 500)).toBe('TOO_LONG');
     expect(checkChatBody('😀'.repeat(500), 500)).toBeNull();
+  });
+});
+
+// ───────────── 여러 명이 만나는 약속 (9-2a) ─────────────
+
+describe('여러 명이 만나는 약속: 전날 확인 마감', () => {
+  const side = (userId: string, s: 'A' | 'B', o: Partial<ParticipantFacts> = {}) => person(userId, { side: s, ...o });
+  const confirmed = kst('2026-12-12T19:00:00');
+  const afterDeadline = kst('2026-12-13T11:00:00');
+
+  test('확인하지 않은 사람만 빠지고, 양쪽에 확인한 사람이 남으면 계속한다', () => {
+    const f = facts({ participants: [side('a1', 'A', { confirmedAt: confirmed }), side('a2', 'A'), side('b', 'B', { confirmedAt: confirmed })] });
+    expect(dueAppointmentSteps(f, afterDeadline)).toEqual([{ kind: 'DROP_NO_CONFIRM', noResponseUserIds: ['a2'] }]);
+  });
+
+  test('한 쪽에 확인한 사람이 한 명도 없으면 약속이 취소된다', () => {
+    const noB = facts({ participants: [side('a1', 'A', { confirmedAt: confirmed }), side('a2', 'A', { confirmedAt: confirmed }), side('b', 'B')] });
+    expect(dueAppointmentSteps(noB, afterDeadline)).toEqual([{ kind: 'CANCEL_NO_CONFIRM', noResponseUserIds: ['b'] }]);
+    const noA = facts({ participants: [side('a1', 'A'), side('a2', 'A'), side('b', 'B', { confirmedAt: confirmed })] });
+    expect(dueAppointmentSteps(noA, afterDeadline)).toEqual([{ kind: 'CANCEL_NO_CONFIRM', noResponseUserIds: ['a1', 'a2'] }]);
+  });
+
+  test('1:1은 그대로: 한 명이라도 확인하지 않으면 취소', () => {
+    const f = facts({ participants: [person('a', { confirmedAt: confirmed }), person('b')] });
+    expect(dueAppointmentSteps(f, afterDeadline)).toEqual([{ kind: 'CANCEL_NO_CONFIRM', noResponseUserIds: ['b'] }]);
+  });
+
+  test('양쪽 판정 도우미', () => {
+    expect(sidesRemain([{ side: 'A' }, { side: 'B' }])).toBe(true);
+    expect(sidesRemain([{ side: 'A' }, { side: 'A' }])).toBe(false);
+    expect(sidesRemain([])).toBe(false);
+  });
+});
+
+describe('여러 명이 만나는 약속: 누가 빠질 때', () => {
+  const c = new Date('2026-12-12T10:00:00Z');
+  const group = [
+    { userId: 'a1', side: 'A' as const, confirmedAt: c },
+    { userId: 'a2', side: 'A' as const, confirmedAt: null },
+    { userId: 'b', side: 'B' as const, confirmedAt: c },
+  ];
+
+  test('한 쪽이 비면 약속이 취소된다', () => {
+    expect(outcomeOfLeaving('CONFIRMED', group, 'b')).toEqual({ kind: 'CANCEL_ALL' });
+    expect(outcomeOfLeaving('PENDING_CONFIRM', [group[0], group[2]], 'a1')).toEqual({ kind: 'CANCEL_ALL' });
+    expect(outcomeOfLeaving('IN_PROGRESS', [group[0], group[2]], 'b')).toEqual({ kind: 'CANCEL_ALL' });
+  });
+
+  test('확정된 약속에서 일행이 빠지면 상대 쪽이 다시 확인한다', () => {
+    expect(outcomeOfLeaving('CONFIRMED', group, 'a2')).toEqual({ kind: 'CONTINUE', reconfirmSide: 'B', becomesConfirmed: false });
+    // 받는 쪽이 아닌 보낸 쪽이 빠졌으니 B가 다시 확인. 반대로 B 쪽 일행이 빠지면 A 쪽이 다시 확인
+    const bTwo = [...group, { userId: 'b2', side: 'B' as const, confirmedAt: c }];
+    expect(outcomeOfLeaving('CONFIRMED', bTwo, 'b2')).toEqual({ kind: 'CONTINUE', reconfirmSide: 'A', becomesConfirmed: false });
+  });
+
+  test('확정 대기에서 빠지면 남은 사람이 모두 이미 확인했을 때 바로 확정된다', () => {
+    expect(outcomeOfLeaving('PENDING_CONFIRM', group, 'a2')).toEqual({ kind: 'CONTINUE', reconfirmSide: null, becomesConfirmed: true });
+    const pending = [group[0], { ...group[1], confirmedAt: null }, { ...group[2], confirmedAt: null }];
+    expect(outcomeOfLeaving('PENDING_CONFIRM', pending, 'a2')).toEqual({ kind: 'CONTINUE', reconfirmSide: null, becomesConfirmed: false });
+  });
+
+  test('만남 중에 빠지면 그냥 남은 사람끼리 계속한다', () => {
+    expect(outcomeOfLeaving('IN_PROGRESS', group, 'a2')).toEqual({ kind: 'CONTINUE', reconfirmSide: null, becomesConfirmed: false });
+  });
+});
+
+describe('여러 명이 만나는 약속: 노쇼', () => {
+  const t = (s: string) => kst(s);
+  test('도착하지 않은 사람마다 신고하고, 아무도 도착하지 않았을 때만 만남이 끝난다', () => {
+    const arrived = t('2026-12-13T13:55:00');
+    expect(noShowOutcome('a', [{ userId: 'a', arrivedAt: arrived }, { userId: 'b' }, { userId: 'c' }])).toEqual({ targets: ['b', 'c'], endsMeeting: true });
+    expect(noShowOutcome('a', [{ userId: 'a', arrivedAt: arrived }, { userId: 'b', arrivedAt: arrived }, { userId: 'c' }])).toEqual({ targets: ['c'], endsMeeting: false });
+  });
+
+  test('1:1은 그대로 끝난다', () => {
+    expect(noShowOutcome('a', [{ userId: 'a', arrivedAt: t('2026-12-13T13:55:00') }, { userId: 'b' }])).toEqual({ targets: ['b'], endsMeeting: true });
+  });
+
+  test("이미 눌렀으면 다시 누를 수 없고, 다른 사람이 모두 도착했으면 누를 수 없다", () => {
+    const arrived = kst('2026-12-13T13:55:00');
+    const now = kst('2026-12-13T14:20:00');
+    const base = { status: 'IN_PROGRESS' as const };
+    const some = facts({ ...base, participants: [person('a', { arrivedAt: arrived }), person('b', { arrivedAt: arrived }), person('c')] });
+    expect(appointmentActions(some, 'a', now, { newScheduleAvailable: false }).reportNoShow).toBe(true);
+    const pressed = facts({ ...base, participants: [person('a', { arrivedAt: arrived, noShowReportedAt: now }), person('b', { arrivedAt: arrived }), person('c')] });
+    expect(appointmentActions(pressed, 'a', now, { newScheduleAvailable: false }).reportNoShow).toBe(false);
+    const all = facts({ ...base, participants: [person('a', { arrivedAt: arrived }), person('b', { arrivedAt: arrived }), person('c', { arrivedAt: arrived })] });
+    expect(appointmentActions(all, 'a', now, { newScheduleAvailable: false }).reportNoShow).toBe(false);
+  });
+});
+
+describe('여러 명 표시', () => {
+  test('이름 묶기와 존칭', () => {
+    expect(groupName(['하늘'])).toBe('하늘');
+    expect(groupName(['하늘', '지우', '민트'])).toBe('하늘 외 2명');
+    expect(honorific('하늘')).toBe('하늘님');
+    expect(honorific('하늘 외 2명')).toBe('하늘님 외 2명');
+  });
+
+  test('빠진 사람 알림: 다시 확인 기한이 있으면 안내가 붙는다', () => {
+    const plain = notificationText('APPOINTMENT_MEMBER_LEFT', { nickname: '하늘', eventName: '콘서트' });
+    expect(plain.body).toContain('남은 사람끼리 계속해요');
+    const ask = notificationText('APPOINTMENT_MEMBER_LEFT', { nickname: '하늘 외 1명', eventName: '콘서트', deadline: '12.12 (토) 18:00' });
+    expect(ask.body).toContain('하늘님 외 1명이');
+    expect(ask.body).toContain('12.12 (토) 18:00까지');
   });
 });
