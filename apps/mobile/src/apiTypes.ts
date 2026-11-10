@@ -9,6 +9,9 @@ import type {
   ChatView,
   AppointmentView,
   HelpResult,
+  InstantEventView,
+  InstantStatusView,
+  InstantStyleInput,
   PartyInvitePreview,
   PartyView,
   SafetySettings,
@@ -111,6 +114,13 @@ export interface Backend {
   createShareLink(appointmentId: string, showStatus: boolean): Promise<ShareLinkView>;
   revokeShareLink(linkId: string): Promise<{ revoked: true }>;
   /** 일행 (2~4명, 초대 링크로 합류, 전원이 입력하면 후보가 열림) */
+  /** 즉석 동행: 오늘 쓸 수 있는 행사, 행사장에 있다고 알리기(켜기·끄기), 대기, 후보 */
+  getInstantEvents(): Promise<InstantEventView[]>;
+  getInstantStatus(eventId: string): Promise<InstantStatusView>;
+  turnOnInstant(eventId: string, style?: InstantStyleInput): Promise<InstantStatusView>;
+  turnOffInstant(eventId: string): Promise<InstantStatusView>;
+  getInstantCandidates(eventId: string): Promise<CandidatesResponse>;
+  getInstantCandidate(eventId: string, userId: string): Promise<CandidateDetail>;
   createParty(eventId: string): Promise<PartyView>;
   getEventParty(eventId: string): Promise<{ party: PartyView | null }>;
   listParties(): Promise<PartyView[]>;

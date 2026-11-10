@@ -114,6 +114,10 @@ describe('켜기와 끄기', () => {
     await put(n, `/events/${ev.id}/instant`, { style: { tempoAnswers: [2, 2, 2], immersionAnswers: [2, 2] } }).expect(200);
     expect((await get(n, `/events/${ev.id}/instant`)).body.mine.active).toBe(true);
     await put(n, `/events/${ev.id}/instant`, { style: { tempoAnswers: [9, 2, 2], immersionAnswers: [2, 2] } }).expect(400);
+    // 한 번 답하면 끄고 다시 켜도 다시 묻지 않는다
+    await del(n, `/events/${ev.id}/instant`).expect(200);
+    expect((await get(n, `/events/${ev.id}/instant`)).body.needsStyle).toBe(false);
+    await on(n, ev).expect(200);
   });
 
   it('위치 같은 값은 받지 않고, 저장하지도 않는다', async () => {

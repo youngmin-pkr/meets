@@ -53,6 +53,7 @@ import { EventReportedScreen, EventReportScreen } from './src/screens/EventRepor
 import { ChatListScreen, ChatRulesScreen, ChatScreen } from './src/screens/ChatScreens';
 import { BlockListScreen, MyPageScreen, TrustLevelScreen } from './src/screens/MyScreens';
 import { SafetySettingsScreen } from './src/screens/SafetyScreens';
+import { InstantScreen } from './src/screens/InstantScreens';
 import { PartyCandidatesScreen, PartyJoinScreen, PartyListScreen, PartyScreen } from './src/screens/PartyScreens';
 import { ReportScreen, ReviewAgainScreen, ReviewDoneScreen, ReviewPickScreen, ReviewStartScreen } from './src/screens/ReviewScreens';
 import { chooseOverall, initialReviewDraft, type ReviewDraft } from './src/reviewFlow';
@@ -70,6 +71,7 @@ export default function App() {
   const [flowError, setFlowError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // 티켓 인증
+  const [instantEventId, setInstantEventId] = useState<string | null>(null);
   const [partyEventId, setPartyEventId] = useState<string | null>(null);
   const [partyBack, setPartyBack] = useState<Screen>('PARTY_LIST');
   const [partyForCandidates, setPartyForCandidates] = useState<PartyView | null>(null);
@@ -347,6 +349,10 @@ export default function App() {
             onProposals={() => setScreen('PROPOSALS')}
             onAppointment={(a) => openAppointment(a)}
             onNotifications={() => setScreen('NOTIFICATIONS')}
+            onInstant={(id) => {
+              setInstantEventId(id);
+              setScreen('INSTANT');
+            }}
             onTab={goTab}
           />
         )}
@@ -421,6 +427,7 @@ export default function App() {
             onParties={() => setScreen('PARTY_LIST')}
           />
         )}
+        {screen === 'INSTANT' && instantEventId && <InstantScreen eventId={instantEventId} onBack={() => setScreen('HOME')} />}
         {screen === 'PARTY_LIST' && (
           <PartyListScreen
             onBack={() => setScreen('ME')}

@@ -1016,3 +1016,70 @@ describe('데모: 일행', () => {
     await expect(backend.agreeProposal(draft.id)).rejects.toMatchObject({ code: 'NOT_FOUND' }); // 만든 사람은 따로 동의하지 않음
   });
 });
+
+describe('데모: 즉석 동행 (지금 갈래요)', () => {
+  async function world(startIso = '2026-11-07T03:00:00Z') {
+    let clock = new Date(startIso); // 기본: 한국 시간 11월 7일 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity('fake:in1:2000-01-01:F', ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모즉석', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const tick = (sec: number) => {
+      clock = new Date(clock.getTime() + sec * 1000);
+    };
+    const today = (await backend.getInstantEvents())[0];
+    return { backend, tick, today };
+  }
+  const style = { tempoAnswers: [2, 2, 2] as Array<1 | 2 | 3>, immersionAnswers: [2, 2] as Array<1 | 2 | 3> };
+
+  test('오늘 열리는 행사가 보이고, 처음엔 대기 중(4명)이다', async () => {
+    const { backend, today } = await world();
+    expect(today.event.name).toContain('오늘 열리는');
+    expect(today.active).toBe(false);
+    const s = await backend.getInstantStatus(today.event.id);
+    expect(s).toMatchObject({ available: true, closedReason: null, mine: { active: false }, needsStyle: true, waiting: { count: 4, min: 5, open: false } });
+    expect(s.window).toMatchObject({ from: '12:00', to: '13:00', minutes: 60 });
+  });
+
+  test('저장된 입력이 없으면 간단한 스타일 질문에 답해야 켤 수 있고, 60분 동안 켜진다', async () => {
+    const { backend, today } = await world();
+    await expect(backend.turnOnInstant(today.event.id)).rejects.toMatchObject({ code: 'INSTANT_NEEDS_STYLE' });
+    const s = await backend.turnOnInstant(today.event.id, style);
+    expect(s.mine).toEqual({ active: true, until: new Date('2026-11-07T04:00:00Z').toISOString() });
+    expect(s.waiting).toMatchObject({ count: 4, open: false });
+    await expect(backend.getInstantCandidates(today.event.id)).rejects.toMatchObject({ code: 'INSTANT_NOT_NOW' });
+  });
+
+  test('대기 인원이 5명이 되면 후보가 열리고 알림이 한 번 온다. 후보에 나는 없다', async () => {
+    const { backend, tick, today } = await world();
+    await backend.turnOnInstant(today.event.id, style);
+    tick(10); // 예시 사용자 2명이 더 도착
+    expect((await backend.getInstantStatus(today.event.id)).waiting).toMatchObject({ count: 6, open: true });
+    await backend.getInstantStatus(today.event.id);
+    const kinds = (await backend.listNotifications()).items.map((n) => n.kind).filter((k) => k === 'INSTANT_READY');
+    expect(kinds).toHaveLength(1);
+    const res = await backend.getInstantCandidates(today.event.id);
+    expect(res.total).toBeGreaterThan(0);
+    expect(res.candidates.every((c) => c.overlaps[0].minutes >= 30)).toBe(true);
+    const detail = await backend.getInstantCandidate(today.event.id, res.candidates[0].userId);
+    expect(detail.userId).toBe(res.candidates[0].userId);
+  });
+
+  test('끄면 후보를 볼 수 없다. 60분이 지나면 저절로 꺼진다', async () => {
+    const { backend, tick, today } = await world();
+    await backend.turnOnInstant(today.event.id, style);
+    expect((await backend.turnOffInstant(today.event.id)).mine.active).toBe(false);
+    await expect(backend.getInstantCandidates(today.event.id)).rejects.toMatchObject({ code: 'INSTANT_NOT_NOW' });
+    await backend.turnOnInstant(today.event.id);
+    tick(61 * 60);
+    expect((await backend.getInstantStatus(today.event.id)).mine.active).toBe(false);
+  });
+
+  test('밤 22시 이후에는 쓸 수 없다', async () => {
+    const { backend } = await world('2026-11-07T13:10:00Z'); // 한국 시간 22:10
+    expect(await backend.getInstantEvents()).toEqual([]);
+  });
+});

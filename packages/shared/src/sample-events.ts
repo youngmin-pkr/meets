@@ -122,6 +122,26 @@ export function sampleEvents(today: CalendarDate): SampleEvent[] {
       ],
       meetingSpots: [{ name: '테스트 카페 거리 입구 안내판', isPublicPlace: true }],
     },
+    {
+      // 오늘 열리는 행사. 데모에서 '지금 갈래요'(즉석 동행)를 바로 해 볼 수 있습니다. (22시 이후에는 즉석 동행이 닫힘)
+      name: '오늘 열리는 테스트 팝업 마켓',
+      type: 'POPUP',
+      venue: '테스트 광장',
+      officialUrl: 'https://example.com/test-popup-market-today',
+      ticketRequired: false,
+      days: [
+        {
+          date: addDays(today, 0),
+          startTime: '06:00',
+          endTime: '23:00',
+          segments: [
+            { label: '오전', startTime: '06:00', endTime: '13:00' },
+            { label: '오후', startTime: '13:00', endTime: '23:00' },
+          ],
+        },
+      ],
+      meetingSpots: [{ name: '테스트 광장 분수대 앞', isPublicPlace: true }],
+    },
   ];
 }
 

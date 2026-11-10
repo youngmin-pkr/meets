@@ -24,6 +24,21 @@ import {
   CHAT_STATUS_LINES,
   canRequestHelp,
   combineProfiles,
+  hmOf,
+  INSTANT_CLOSED_MESSAGES,
+  instantMatchDay,
+  instantMatchPolicy,
+  instantProfileDay,
+  instantUntil,
+  instantWaiting,
+  instantWindowNow,
+  presenceWindow,
+  type InstantClosedReason,
+  type InstantDay,
+  type InstantEventView,
+  type InstantPolicy,
+  type InstantStatusView,
+  type InstantStyleInput,
   groupName,
   type PartyProposalView,
   type ProposalInput,
@@ -397,6 +412,15 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   /** 차단: 키는 '차단한 사람>차단당한 사람' */
   const blockMap = new Map<string, { blockerId: string; blockedId: string; source: BlockSource; at: Date }>();
   const reviews: Array<{ appointmentId: string; authorId: string; targetId: string; overall: ReviewOverall; again: ReviewAgain }> = [];
+  /** 즉석 동행: '지금 행사장에 있어요'를 켠 기록 (키는 '사용자|행사') */
+  const instantOn = new Map<string, { until: Date; startedAt: Date; tempo: number | null; immersion: number | null; waiting: boolean }>();
+  const instantPolicy: InstantPolicy = {
+    minWaiting: POLICY_DEFAULTS.INSTANT_MIN_WAITING,
+    endHour: POLICY_DEFAULTS.INSTANT_END_HOUR,
+    presenceMinutes: POLICY_DEFAULTS.INSTANT_PRESENCE_MINUTES,
+    windowMinutes: POLICY_DEFAULTS.INSTANT_WINDOW_MINUTES,
+    minOverlapMinutes: POLICY_DEFAULTS.INSTANT_MIN_OVERLAP_MINUTES,
+  };
   /** 일행 */
   const parties: DemoParty[] = [];
   let partySeq = 0;
@@ -479,6 +503,95 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (a.status === 'IN_PROGRESS') runSafetyChecks(a);
     }
     for (const party of parties) settleParty(party, t);
+    settleInstant();
+  }
+
+  // ───────────── 즉석 동행 ─────────────
+
+  /** 데모에서 행사장에 있는 예시 사용자 수: 처음엔 4명(대기), 내가 켠 지 9초쯤 지나면 6명 (대기 → 후보 열림을 보여 주려고) */
+  function instantSampleCount(userId: string, eventId: string): number {
+    const mine = instantOn.get(`${userId}|${eventId}`);
+    return mine && now().getTime() - mine.startedAt.getTime() >= autoAcceptDelayMs * 3 ? 6 : 4;
+  }
+
+  function instantDaysOf(eventId: string): InstantDay[] {
+    const found = events.find((e) => e.detail.id === eventId && e.status === 'REGISTERED');
+    if (!found) throw new ApiError('NOT_FOUND', '행사를 찾을 수 없어요.');
+    return found.detail.days.map((d) => ({ id: d.id, date: d.date, startTime: d.startTime, endTime: d.endTime, segments: d.segments.map((s) => ({ ...s })) }));
+  }
+
+  /** 간단히 답한 스타일은 끄고 다시 켜도 기억합니다. */
+  const instantQuickStyle = new Map<string, { tempo: number; immersion: number }>();
+  const instantHasStyle = (userId: string) => instantQuickStyle.has(userId) || [...preferences.keys()].some((k) => k.startsWith(`${userId}|`));
+
+  function instantSamples(userId: string, eventId: string) {
+    return SAMPLE_PEOPLE.slice(0, instantSampleCount(userId, eventId)).filter((p) => !isBlockedBetween(userId, `demo-sample-${p.key}`));
+  }
+
+  /** 후보 목록이 열렸다고 대기 중이던 사람에게 한 번 알립니다. */
+  function settleInstant() {
+    for (const [key, v] of instantOn) {
+      if (!v.waiting || v.until <= now()) continue;
+      const [userId, eventId] = key.split('|');
+      if (instantSamples(userId, eventId).length >= instantPolicy.minWaiting) {
+        v.waiting = false;
+        notify(userId, 'INSTANT_READY', { eventName: eventName(eventId) });
+      }
+    }
+  }
+
+  function instantStatus(user: DemoUser, eventId: string): InstantStatusView {
+    const found = events.find((e) => e.detail.id === eventId && e.status === 'REGISTERED');
+    if (!found) throw new ApiError('NOT_FOUND', '행사를 찾을 수 없어요.');
+    const a = instantWindowNow(instantDaysOf(eventId), now(), instantPolicy);
+    const reason: InstantClosedReason | null = a.ok ? null : a.reason;
+    const mine = instantOn.get(`${user.id}|${eventId}`);
+    const active = !!mine && mine.until > now() && reason === null;
+    return {
+      event: { id: found.detail.id, name: found.detail.name, venue: found.detail.venue },
+      available: reason === null,
+      closedReason: reason,
+      closedMessage: reason ? INSTANT_CLOSED_MESSAGES[reason] : null,
+      mine: { active, until: active ? mine!.until.toISOString() : null },
+      waiting: instantWaiting(reason === null ? instantSamples(user.id, eventId).length : 0, instantPolicy.minWaiting),
+      window: a.ok ? { from: a.window.from, to: a.window.to, minutes: a.window.minutes } : null,
+      needsStyle: !instantHasStyle(user.id),
+    };
+  }
+
+  /** 내 매칭 정보와 예시 사용자들의 매칭 정보 (오늘, 지금부터의 시간대) */
+  function instantPool(user: DemoUser, eventId: string) {
+    const a = instantWindowNow(instantDaysOf(eventId), now(), instantPolicy);
+    if (!a.ok) throw new ApiError('INSTANT_NOT_NOW', INSTANT_CLOSED_MESSAGES[a.reason]);
+    const mine = instantOn.get(`${user.id}|${eventId}`);
+    if (!mine || mine.until <= now()) throw new ApiError('INSTANT_NOT_NOW', "먼저 '지금 행사장에 있어요'를 켜 주세요.");
+    const pref = [...preferences.entries()].find(([k]) => k.startsWith(`${user.id}|`))?.[1];
+    const event = events.find((e) => e.detail.id === eventId)!.detail;
+    const myWindow = presenceWindow(a.window, mine.until)!;
+    const viewer: MatchProfile = {
+      userId: user.id,
+      age: manAge(user.birth, todayInSeoul(now())),
+      gender: user.gender,
+      tempo: pref?.tempoLevel ?? mine.tempo ?? 2,
+      immersion: pref?.immersionLevel ?? mine.immersion ?? 2,
+      must: pref?.must ?? { gender: 'ANY', age: 'ANY', promises: [] },
+      fandomIds: user.fandomIds,
+      days: [instantProfileDay(a.day, myWindow)],
+      grade: null,
+    };
+    const samples = instantSamples(user.id, eventId);
+    const others: MatchProfile[] = samples.map((p) => ({
+      userId: `demo-sample-${p.key}`,
+      age: p.age,
+      gender: p.gender,
+      tempo: tempoLevel(p.tempoAnswers),
+      immersion: immersionLevel(sampleImmersionAnswers(p, event.category)),
+      must: { gender: p.mustGender, age: p.mustAge, promises: p.promises },
+      fandomIds: p.fandoms.map((n) => fandomIdByName.get(n)).filter((x): x is string => !!x),
+      days: [instantProfileDay(a.day, presenceWindow(a.window, new Date(a.window.toAt.getTime()))!)],
+      grade: null,
+    }));
+    return { a, viewer, others, waiting: instantWaiting(others.length, instantPolicy.minWaiting) };
   }
 
   // ───────────── 일행 ─────────────
@@ -1209,8 +1322,10 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
    * 예시 상대(하늘)는 이미 '갈 수 있어요'를 누른 상태입니다.
    */
   function seedTomorrowAppointment(userId: string) {
-    const index = events.length - 1; // 내일 열리는 '생일 카페'
-    const ev = events[index].detail;
+    const t0 = todayInSeoul(now());
+    const tomorrow = new Date(Date.UTC(t0.year, t0.month - 1, t0.day + 1)).toISOString().slice(0, 10);
+    const found = events.find((e) => e.detail.days[0]?.date === tomorrow && e.detail.name.includes('생일 카페'));
+    const ev = (found ?? events[events.length - 2]).detail; // 내일 열리는 '생일 카페'
     const day = ev.days[0];
     const seg = day.segments[day.segments.length - 1];
     const spot = ev.meetingSpots[0];
@@ -2076,6 +2191,70 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       }
       settleParty(p, now().getTime());
       return delay(partyView(p, user.id));
+    },
+
+    async getInstantEvents() {
+      const user = currentUser();
+      settle();
+      const out: InstantEventView[] = [];
+      for (const e of events) {
+        if (e.status !== 'REGISTERED') continue;
+        if (!instantWindowNow(instantDaysOf(e.detail.id), now(), instantPolicy).ok) continue;
+        const mine = instantOn.get(`${user.id}|${e.detail.id}`);
+        out.push({ event: { id: e.detail.id, name: e.detail.name, venue: e.detail.venue }, active: !!mine && mine.until > now() });
+      }
+      return delay(out);
+    },
+
+    async getInstantStatus(eventId) {
+      const user = currentUser();
+      settle();
+      return delay(instantStatus(user, eventId));
+    },
+
+    async turnOnInstant(eventId, style?: InstantStyleInput) {
+      const user = currentUser();
+      const a = instantWindowNow(instantDaysOf(eventId), now(), instantPolicy);
+      if (!a.ok) throw new ApiError('INSTANT_NOT_NOW', INSTANT_CLOSED_MESSAGES[a.reason]);
+      if (!instantHasStyle(user.id) && !style) throw new ApiError('INSTANT_NEEDS_STYLE', '간단한 질문에 먼저 답해 주세요.');
+      const key = `${user.id}|${eventId}`;
+      const waiting = instantSamples(user.id, eventId).length < instantPolicy.minWaiting;
+      instantOn.set(key, {
+        until: instantUntil(now(), a.day, instantPolicy),
+        startedAt: now(),
+        tempo: style ? tempoLevel(style.tempoAnswers) : (instantQuickStyle.get(user.id)?.tempo ?? null),
+        immersion: style ? immersionLevel(style.immersionAnswers) : (instantQuickStyle.get(user.id)?.immersion ?? null),
+        waiting,
+      });
+      if (style) instantQuickStyle.set(user.id, { tempo: tempoLevel(style.tempoAnswers), immersion: immersionLevel(style.immersionAnswers) });
+      settle();
+      return delay(instantStatus(user, eventId));
+    },
+
+    async turnOffInstant(eventId) {
+      const user = currentUser();
+      instantOn.delete(`${user.id}|${eventId}`);
+      return delay(instantStatus(user, eventId));
+    },
+
+    async getInstantCandidates(eventId) {
+      const user = currentUser();
+      settle();
+      const { a, viewer, others, waiting } = instantPool(user, eventId);
+      if (!waiting.open) throw new ApiError('INSTANT_NOT_NOW', `지금 만날 수 있는 사람이 ${waiting.min}명이 되면 후보를 볼 수 있어요.`);
+      const result = matchCandidates(viewer, others, [instantMatchDay(a.day)], instantMatchPolicy(POLICY, instantPolicy));
+      const cards = result.candidates.map(cardOf);
+      return delay({ total: cards.length, immersionRelaxed: result.immersionRelaxed, candidates: cards, widen: null });
+    },
+
+    async getInstantCandidate(eventId, userId) {
+      const user = currentUser();
+      const { a, viewer, others, waiting } = instantPool(user, eventId);
+      if (!waiting.open) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const c = matchCandidates(viewer, others, [instantMatchDay(a.day)], instantMatchPolicy(POLICY, instantPolicy), { shortTime: true, immersionPlus: true }).candidates.find((x) => x.userId === userId);
+      if (!c) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const sample = people.get(userId);
+      return delay({ ...cardOf(c), reasons: explainMatch(c, [instantMatchDay(a.day)], PROMISE_SHORT_LABELS), publicFandoms: sample?.fandomPublic ? sample.fandoms : [] });
     },
 
     async createPartyProposal(partyId, input: ProposalInput) {

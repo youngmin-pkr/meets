@@ -22,6 +22,8 @@ export type Screen =
   | 'APPOINTMENT'
   | 'APPOINTMENT_CANCEL'
   | 'SAFETY_SETTINGS'
+  /** 즉석 동행 '지금 갈래요' */
+  | 'INSTANT'
   /** 일행 */
   | 'PARTY'
   | 'PARTY_LIST'

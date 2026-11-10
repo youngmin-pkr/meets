@@ -181,9 +181,13 @@ export class InstantService {
     };
   }
 
-  /** 저장된 입력(어느 행사든)이 없으면 간단한 스타일 질문이 필요합니다. */
+  /** 저장된 입력(어느 행사든)도, 이전에 간단히 답한 스타일도 없으면 간단한 스타일 질문이 필요합니다. */
   private async needsStyle(userId: string) {
-    return (await this.prisma.preference.count({ where: { userId } })) === 0;
+    const [pref, quick] = await Promise.all([
+      this.prisma.preference.count({ where: { userId } }),
+      this.prisma.instantPresence.count({ where: { userId, tempoLevel: { not: null } } }),
+    ]);
+    return pref === 0 && quick === 0;
   }
 
   /** 오늘 즉석 동행을 쓸 수 있는 행사들 (홈의 '지금 갈래요') */
