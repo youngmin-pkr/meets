@@ -78,7 +78,7 @@ export class MatchingService {
     return { event, days };
   }
 
-  private async matchPolicy(): Promise<MatchPolicy> {
+  async matchPolicy(): Promise<MatchPolicy> {
     const p = await this.policy.getNumbers([
       'MATCH_TEMPO_MAX_GAP',
       'MATCH_IMMERSION_MAX_GAP',
@@ -240,7 +240,7 @@ export class MatchingService {
     return { days: upcoming, profiles, users, viewer, policy: await this.matchPolicy() };
   }
 
-  private toCard(c: MatchCandidate, users: Awaited<ReturnType<MatchingService['profiles']>>['users']): CandidateCard {
+  toCard(c: MatchCandidate, users: Awaited<ReturnType<MatchingService['profiles']>>['users']): CandidateCard {
     const u = users.get(c.userId)!;
     return {
       userId: c.userId,

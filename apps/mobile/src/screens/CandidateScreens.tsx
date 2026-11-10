@@ -80,7 +80,7 @@ function GradeBadge({ grade }: { grade: AttendanceGrade | null }) {
   );
 }
 
-export function CandidateCardView({ c, multiDay, onPress, highlight }: { c: CandidateCard; multiDay: boolean; onPress: () => void; highlight: boolean }) {
+export function CandidateCardView({ c, multiDay, onPress, highlight, showGrade = true }: { c: CandidateCard; multiDay: boolean; onPress: () => void; highlight: boolean; /** 즉석 동행은 티켓 인증이 필요 없어서 등급을 보이지 않습니다 */ showGrade?: boolean }) {
   const best = [...c.overlaps].sort((a, b) => b.minutes - a.minutes)[0];
   return (
     <Pressable
@@ -93,7 +93,7 @@ export function CandidateCardView({ c, multiDay, onPress, highlight }: { c: Cand
         <Avatar initial={c.avatarInitial} color={c.avatarColor} />
         <View style={{ flex: 1, gap: 4, alignItems: 'flex-start' }}>
           <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>{c.nickname}</Text>
-          <GradeBadge grade={c.grade} />
+          {showGrade ? <GradeBadge grade={c.grade} /> : null}
           {c.reunion ? <Badge label="서로 또 같이 가고 싶어 했어요" tone="lime" /> : null}
         </View>
         <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>자세히 ›</Text>

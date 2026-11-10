@@ -19,6 +19,7 @@ import {
   type CancelReason,
   type EventCategory,
   type EventSummary,
+  type InstantEventView,
   type NotificationView,
   type ProposalView,
 } from '@meets/shared';
@@ -66,12 +67,15 @@ export function HomeScreen(props: {
   onProposals: () => void;
   onAppointment: (a: AppointmentView) => void;
   onNotifications: () => void;
+  /** 오늘 열리는 행사에서 '지금 갈래요' */
+  onInstant: (eventId: string) => void;
   onTab: (t: Tab) => void;
 }) {
   const [proposals, setProposals] = useState<ProposalView[] | null>(null);
   const [appointments, setAppointments] = useState<AppointmentView[]>([]);
   const [summary, setSummary] = useState<HomeSummary | null>(null);
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [instant, setInstant] = useState<InstantEventView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
 
@@ -86,6 +90,9 @@ export function HomeScreen(props: {
       },
       (e: Error) => setError(e.message),
     );
+  }, []);
+  useEffect(() => {
+    api.getInstantEvents().then(setInstant, () => undefined);
   }, []);
 
   const today = todayIso();
@@ -134,6 +141,22 @@ export function HomeScreen(props: {
         </View>
         <Text style={{ fontSize: 14, color: colors.muted }}>행사·장소 검색</Text>
       </Pressable>
+
+      {instant.map((i) => (
+        <Pressable
+          key={`instant-${i.event.id}`}
+          onPress={() => props.onInstant(i.event.id)}
+          accessibilityRole="button"
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 14, backgroundColor: colors.ink }}
+        >
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.lime }}>지금 갈래요</Text>
+            <Text style={[{ fontSize: 15, fontWeight: '900', color: colors.white }, keepWords]}>{i.active ? '행사장에 있다고 알렸어요' : `${i.event.name}에 지금 있나요?`}</Text>
+            <Text style={[{ fontSize: 12, color: colors.white }, keepWords]}>같이 갈 사람을 지금 바로 찾아봐요</Text>
+          </View>
+          <Arrow color={colors.white} />
+        </Pressable>
+      ))}
 
       {(proposals ?? [])
         .filter((p) => p.status === 'DRAFT' && p.consent?.needsMyAgreement)

@@ -31,6 +31,7 @@ enum NotificationChoice {
 }
 
 model User {
+  instantPresences      InstantPresence[]   @relation("InstantPresenceUser")
   proposalConsents      ProposalConsent[]   @relation("ConsentUser")
   ledParties            Party[]             @relation("PartyLeader")
   partyMemberships      PartyMember[]       @relation("PartyMemberUser")
@@ -188,6 +189,7 @@ enum EventStatus {
 
 /// 행사. 포스터·사진 없이 사실 정보만 저장합니다.
 model Event {
+  instantPresences InstantPresence[]
   parties        Party[]
   id             String        @id @default(uuid())
   name           String
@@ -661,6 +663,7 @@ enum NotificationKind {
   PARTY_PROPOSAL_ASK
   PARTY_PROPOSAL_SENT
   PARTY_PROPOSAL_DECLINED
+  INSTANT_READY
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -944,4 +947,30 @@ model ProposalConsent {
   user       User      @relation("ConsentUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([proposalId, userId])
+}
+
+/// 즉석 동행: 지금 행사장에 있고 만날 수 있다고 직접 켠 기록 (정리문서 2장 즉석 동행).
+/// 위치(좌표)는 받지 않습니다. 사용자가 '지금 행사장에 있어요'를 켜면 일정 시간 동안만 후보 풀에 들어갑니다.
+/// TODO(법률 검토): GPS로 행사장 안인지 확인하는 방식은 위치 정보 이용 동의를 정한 뒤에 넣습니다.
+model InstantPresence {
+  id              String    @id @default(uuid())
+  userId          String
+  eventId         String
+  eventDayId      String
+  startedAt       DateTime
+  /// 이 시각까지만 켜져 있습니다. (끄면 endedAt, 시간이 지나면 저절로 꺼짐)
+  until           DateTime
+  endedAt         DateTime?
+  /// 저장된 입력이 없을 때 간단히 답한 스타일
+  tempoLevel      Int?
+  immersionLevel  Int?
+  /// 대기 중(후보가 열리지 않은 상태)에 켰으면 그때의 시각. 후보가 열리면 알리고 비웁니다.
+  waitingSince    DateTime?
+  /// '후보가 열렸어요' 알림을 보낸 시각 (하루 한 번)
+  readyNotifiedAt DateTime?
+  user            User      @relation("InstantPresenceUser", fields: [userId], references: [id], onDelete: Cascade)
+  event           Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, eventId])
+  @@index([eventId, until])
 }
