@@ -162,7 +162,7 @@ export function InstantScreen(props: { eventId: string; onBack: () => void }) {
             <View style={{ gap: 12 }}>
               <Text style={{ fontSize: 15, fontWeight: '900', color: colors.ink }}>{`지금 만날 수 있는 후보 ${list.total}명`}</Text>
               {list.candidates.map((c, i) => (
-                <CandidateCardView key={c.userId} c={c} multiDay={false} highlight={i === 0} onPress={() => undefined} />
+                <CandidateCardView key={c.userId} c={c} multiDay={false} highlight={i === 0} showGrade={false} onPress={() => undefined} />
               ))}
               {list.total === 0 ? <Body>지금 시간이 겹치는 후보가 아직 없어요. 잠시 뒤 다시 볼까요?</Body> : null}
               <Note>짧은 제안과 즉석 약속은 다음 단계에서 열려요.</Note>
