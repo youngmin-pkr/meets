@@ -112,6 +112,16 @@ export const POLICY_DEFAULTS = {
   PARTY_INVITE_EXPIRE_HOURS: 48,
   /** 합류한 친구가 입력을 안 했을 때 재촉 알림을 보내는 시점(합류 후 몇 시간). 재촉은 1번만 (정리문서 8장) */
   PARTY_INPUT_REMIND_HOURS: 24,
+  /** 즉석 동행: 후보 목록이 열리는 최소 대기 인원(나를 뺀 사람 수) (정리문서 정책 값 1) */
+  INSTANT_MIN_WAITING: 5,
+  /** 즉석 동행: 이 시각(한국 시간, 시) 이후에는 만나지 않음 (정책 값 18) */
+  INSTANT_END_HOUR: 22,
+  /** 즉석 동행: '지금 행사장에 있어요'를 한 번 켜면 유지되는 시간(분). 2026-11-10 제안, 사용자 확인 */
+  INSTANT_PRESENCE_MINUTES: 60,
+  /** 즉석 동행: 지금부터 이 시간(분) 안의 만남만 제안할 수 있음 (정리문서 2장 '60분 이내') */
+  INSTANT_WINDOW_MINUTES: 60,
+  /** 즉석 동행: 함께할 수 있는 시간이 최소 이만큼(분)은 겹쳐야 후보. 2026-11-10 제안, 사용자 확인 */
+  INSTANT_MIN_OVERLAP_MINUTES: 30,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

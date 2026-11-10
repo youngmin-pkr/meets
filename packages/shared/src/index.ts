@@ -17,3 +17,4 @@ export * from './trust';
 export * from './report';
 export * from './safety';
 export * from './party';
+export * from './instant';

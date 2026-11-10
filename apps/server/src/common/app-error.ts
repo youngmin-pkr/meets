@@ -58,7 +58,9 @@ export type AppErrorCode =
   | 'PARTY_STATE'
   | 'PARTY_NOT_READY'
   | 'PARTY_ADULT_ONLY'
-  | 'INVITE_UNAVAILABLE';
+  | 'INVITE_UNAVAILABLE'
+  | 'INSTANT_NOT_NOW'
+  | 'INSTANT_NEEDS_STYLE';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -117,6 +119,8 @@ const STATUS: Record<AppErrorCode, number> = {
   PARTY_NOT_READY: 409,
   PARTY_ADULT_ONLY: 403,
   INVITE_UNAVAILABLE: 404,
+  INSTANT_NOT_NOW: 409,
+  INSTANT_NEEDS_STYLE: 409,
 };
 
 export class AppError extends Error {

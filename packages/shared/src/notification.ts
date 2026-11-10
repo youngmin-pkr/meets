@@ -37,7 +37,8 @@ export type NotificationKind =
   | 'APPOINTMENT_MEMBER_LEFT'
   | 'PARTY_PROPOSAL_ASK'
   | 'PARTY_PROPOSAL_SENT'
-  | 'PARTY_PROPOSAL_DECLINED';
+  | 'PARTY_PROPOSAL_DECLINED'
+  | 'INSTANT_READY';
 
 export interface NotificationParams {
   nickname?: string;
@@ -154,6 +155,8 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return { title: '일행 제안이 나갔어요', body: `${ev} 일행 제안에 모두 동의해서 제안을 보냈어요. ${p.deadline}까지 답을 기다려요.` };
     case 'PARTY_PROPOSAL_DECLINED':
       return { title: '일행 제안이 취소됐어요', body: `${nick}이 동의하지 않아 ${ev} 일행 제안이 취소됐어요. 다시 만들 수 있어요.` };
+    case 'INSTANT_READY':
+      return { title: '같이 갈 사람을 볼 수 있어요', body: `${ev}에서 지금 만날 수 있는 사람이 모였어요. 후보를 확인해 보세요.` };
     case 'PARTY_DISBANDED':
       return { title: '일행이 풀렸어요', body: `${ev} 일행이 풀렸어요. 개인으로 같이 갈 사람을 찾아볼 수 있어요.` };
     case 'ADMIN_WARNING':

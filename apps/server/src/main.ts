@@ -1,6 +1,7 @@
 import { createApp } from './app.factory';
 import { AppointmentsService } from './appointments/appointments.service';
 import { loadConfig } from './config';
+import { InstantService } from './instant/instant.service';
 import { PartiesService } from './parties/parties.service';
 import { ProposalsService } from './proposals/proposals.service';
 
@@ -16,11 +17,12 @@ async function main() {
   const appointments = app.get(AppointmentsService);
   const proposals = app.get(ProposalsService);
   const parties = app.get(PartiesService);
+  const instant = app.get(InstantService);
   let running = false;
   setInterval(() => {
     if (running) return;
     running = true;
-    Promise.all([proposals.expireDue(), appointments.settle(), parties.settleAll()])
+    Promise.all([proposals.expireDue(), appointments.settle(), parties.settleAll(), instant.settleAll()])
       // 오류 메시지에는 개인정보가 들어가지 않습니다. (이름·종류만 남김)
       .catch((error: Error) => console.error(`시간 작업 실패: ${error.name}`))
       .finally(() => (running = false));
