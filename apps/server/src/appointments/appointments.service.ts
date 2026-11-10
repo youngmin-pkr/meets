@@ -193,8 +193,12 @@ export class AppointmentsService {
     meetingSpotName: string,
     /** 일행으로 제안한 경우 함께하는 사람 전원(제안을 보낸 쪽 A, 받은 쪽 B). 없으면 보낸 사람과 받은 사람 둘 */
     people?: Array<{ userId: string; side: AppointmentSide }>,
+    /** 즉석 동행이면 수락하는 순간 확정합니다. 전날 확인은 없고, 취소 기한은 freeCancelAt까지입니다. */
+    instant?: { freeCancelAt: Date },
   ) {
-    return this.state.create(tx, {
+    const now = this.clock.now();
+    const policy = { ...(await this.policySnapshot()) };
+    const created = await this.state.create(tx, {
       proposalId: p.id,
       eventId: p.eventId,
       eventDayId: p.eventDayId,
@@ -205,14 +209,20 @@ export class AppointmentsService {
       endTime: schedule.endTime,
       segmentsSnapshot: schedule.segments,
       meetingSpotName,
-      policy: { ...(await this.policySnapshot()) },
+      policy: instant ? { ...policy, soonMinutes: 0, freeCancelAt: instant.freeCancelAt.toISOString() } : policy,
+      instant: !!instant,
       participants: {
-        create: people ?? [
-          { userId: p.senderId, side: 'A' },
-          { userId: p.receiverId, side: 'B' },
-        ],
+        create: (people ?? [
+          { userId: p.senderId, side: 'A' as const },
+          { userId: p.receiverId, side: 'B' as const },
+        ]).map((x) => ({ ...x, ...(instant ? { dayBeforeConfirmedAt: now } : {}) })),
       },
     });
+    if (instant) {
+      await this.state.transition(tx, created.id, 'PENDING_CONFIRM', 'CONFIRMED', { confirmedAt: now });
+      return { ...created, status: 'CONFIRMED' as const };
+    }
+    return created;
   }
 
   /** 이 사람의 진행 중인 약속 중 시간이 겹치는 것 */
@@ -376,6 +386,7 @@ export class AppointmentsService {
     return {
       id: a.id,
       status,
+      instant: a.instant,
       counterpart: counterpart((others[0] ?? orderedOthers(a.participants, me, { includeLeft: true })[0]).user),
       companions,
       event: { id: a.event.id, name: a.event.name },

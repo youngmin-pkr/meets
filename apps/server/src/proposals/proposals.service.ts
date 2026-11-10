@@ -1,6 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   appointmentWindow,
+  instantSchedule,
+  INSTANT_DURATIONS,
+  hmOf,
+  type InstantProposalInput,
   AVATAR_COLORS,
   formatSeoulShort,
   groupName,
@@ -16,6 +20,7 @@ import { AppointmentsService } from '../appointments/appointments.service';
 import { AppError } from '../common/app-error';
 import { CLOCK, type Clock } from '../common/clock';
 import type { Prisma } from '../generated/prisma/client';
+import { InstantService } from '../instant/instant.service';
 import { MatchingService } from '../matching/matching.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
@@ -55,6 +60,7 @@ export class ProposalsService {
     private readonly policy: PolicyService,
     private readonly state: ProposalStateService,
     private readonly matching: MatchingService,
+    private readonly instant: InstantService,
     private readonly tickets: TicketsService,
     private readonly appointments: AppointmentsService,
     private readonly notifications: NotificationsService,
@@ -127,6 +133,7 @@ export class ProposalsService {
             }
           : null,
       canCancel: (status === 'DRAFT' || status === 'SENT') && (p.senderId === me || inParty),
+      instant: p.kind === 'INSTANT' ? { minutes: p.durationMinutes ?? 0 } : null,
     };
   }
 
@@ -292,9 +299,124 @@ export class ProposalsService {
     return p;
   }
 
-  /** 수락하면 약속이 만들어집니다. (확정 대기) */
+  // ───────────── 즉석 제안 (정리문서 2장 즉석 동행) ─────────────
+
+  private async instantParams() {
+    const p = await this.policy.getNumbers(['INSTANT_START_DELAY_MINUTES', 'INSTANT_FREE_CANCEL_MINUTES', 'INSTANT_END_HOUR', 'INSTANT_MIN_OVERLAP_MINUTES', 'INSTANT_PROPOSAL_EXPIRE_MINUTES']);
+    return {
+      startDelayMinutes: p.INSTANT_START_DELAY_MINUTES,
+      freeCancelMinutes: p.INSTANT_FREE_CANCEL_MINUTES,
+      endHour: p.INSTANT_END_HOUR,
+      minOverlapMinutes: p.INSTANT_MIN_OVERLAP_MINUTES,
+      expireMinutes: p.INSTANT_PROPOSAL_EXPIRE_MINUTES,
+    };
+  }
+
+  /**
+   * 즉석 제안 보내기: 지금 만날 수 있는 후보에게 '지금부터 N분, 이 공개된 장소에서'를 10분 동안 제안합니다.
+   * 보낸 사람은 후보가 열린 상태(대기 5명 이상)로 켜 둔 사람이어야 하고, 받는 사람은 내 후보여야 합니다.
+   * 한 사람이 동시에 보낼 수 있는 즉석 제안은 하나입니다.
+   */
+  async sendInstant(senderId: string, eventId: string, input: InstantProposalInput): Promise<ProposalView> {
+    if (input.receiverId === senderId) throw new AppError('PROPOSAL_INVALID', '나에게는 제안할 수 없어요.');
+    if (!INSTANT_DURATIONS.includes(input.minutes)) throw new AppError('PROPOSAL_INVALID', '30분이나 60분 중에서 골라 주세요.', { field: 'minutes' });
+    await this.assertNotRestricted(senderId);
+    const today = await this.instant.todayDay(eventId);
+    if (!today) throw new AppError('INSTANT_NOT_NOW', '지금은 즉석 동행을 쓸 수 없어요.');
+    // 후보 목록과 같은 규칙: 내가 켜 두었고, 후보가 열렸고, 받는 사람이 내 후보
+    await this.instant.candidateDetail(senderId, eventId, input.receiverId);
+    const spot = await this.prisma.meetingSpot.findFirst({ where: { id: input.meetingSpotId, eventId, isPublicPlace: true } });
+    if (!spot) throw new AppError('PROPOSAL_INVALID', '공개된 만날 장소를 골라 주세요.', { field: 'meetingSpotId' });
+    const ip = await this.instantParams();
+    const now = this.clock.now();
+    const schedule = instantSchedule(now, today.day, input.minutes, ip);
+    if (!schedule) throw new AppError('PROPOSAL_TOO_LATE', '행사 시간이 얼마 남지 않아 지금은 제안할 수 없어요.');
+
+    const pair = { eventId, OR: [{ senderId, receiverId: input.receiverId }, { senderId: input.receiverId, receiverId: senderId }] };
+    await this.expireDue({ OR: [pair, { senderId }] });
+    if (await this.prisma.proposal.findFirst({ where: { ...pair, status: { in: ['SENT'] } }, select: { id: true } })) {
+      throw new AppError('PROPOSAL_EXISTS', '이미 이 분과 오가는 제안이 있어요.');
+    }
+    if (await this.prisma.proposal.findFirst({ where: { senderId, kind: 'INSTANT', status: { in: ['SENT'] } }, select: { id: true } })) {
+      throw new AppError('PROPOSAL_EXISTS', '답을 기다리는 즉석 제안이 있어요. 답이 오거나 만료되면 새로 보낼 수 있어요.');
+    }
+    if (await this.appointments.findOverlap(senderId, { startsAt: schedule.startsAt, endsAt: schedule.endsAt })) {
+      throw new AppError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+    }
+    const expiresAt = new Date(now.getTime() + ip.expireMinutes * 60 * 1000);
+    const created = await this.prisma.$transaction(async (tx) => {
+      const proposal = await this.state.createSent(tx, {
+        kind: 'INSTANT',
+        senderId,
+        receiverId: input.receiverId,
+        eventId,
+        eventDayId: today.day.id,
+        segmentIds: [],
+        meetingSpotId: spot.id,
+        date: today.day.date,
+        segmentsSnapshot: [],
+        meetingSpotName: spot.name,
+        durationMinutes: input.minutes,
+        expiresAt,
+      });
+      const sender = await tx.user.findUniqueOrThrow({ where: { id: senderId }, select: { nickname: true } });
+      const event = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { name: true } });
+      // 곧 만날 사람의 제안이라 방해 금지 시간과 상관없이 바로 알립니다.
+      await this.notifications.notify(tx, input.receiverId, 'PROPOSAL_RECEIVED', { nickname: sender.nickname ?? '', eventName: event.name, deadline: hmOf(expiresAt) }, { proposalId: proposal.id }, { urgent: true });
+      return proposal;
+    });
+    return this.view(senderId, created.id);
+  }
+
+  /** 즉석 제안을 수락하면 바로 확정된 약속이 만들어지고, 두 사람 모두 후보 풀에서 빠집니다. */
+  private async acceptInstant(userId: string, p: Prisma.ProposalGetPayload<object>): Promise<AppointmentView> {
+    await this.assertNotRestricted(userId);
+    // 그사이 둘 중 누가 끄거나 시간이 지났거나 차단·제한이 생겼으면 수락할 수 없습니다.
+    if (!(await this.instant.pairStillValid(p.senderId, userId, p.eventId))) {
+      throw new AppError('PROPOSAL_INVALID', '그사이 상대가 자리를 비웠거나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
+    }
+    const today = await this.instant.todayDay(p.eventId);
+    if (!today) throw new AppError('INSTANT_NOT_NOW', '지금은 즉석 동행을 쓸 수 없어요.');
+    const spot = p.meetingSpotId ? await this.prisma.meetingSpot.findUnique({ where: { id: p.meetingSpotId } }) : null;
+    if (!spot) throw new AppError('PROPOSAL_INVALID', '그사이 만날 장소가 바뀌어 이 제안은 수락할 수 없어요.');
+    const ip = await this.instantParams();
+    const now = this.clock.now();
+    const schedule = instantSchedule(now, today.day, p.durationMinutes ?? 30, ip);
+    if (!schedule) throw new AppError('PROPOSAL_TOO_LATE', '행사 시간이 얼마 남지 않아 지금은 만날 수 없어요.');
+    const range = { startsAt: schedule.startsAt, endsAt: schedule.endsAt };
+    if (await this.appointments.findOverlap(userId, range)) throw new AppError('APPOINTMENT_OVERLAP', '그 시간에 이미 다른 약속이 있어요.');
+    if (await this.appointments.findOverlap(p.senderId, range)) throw new AppError('APPOINTMENT_OVERLAP', '상대에게 그 시간에 다른 약속이 생겨서 지금은 수락할 수 없어요.');
+
+    const appointment = await this.prisma.$transaction(async (tx) => {
+      await this.state.transition(tx, p.id, 'SENT', 'ACCEPTED');
+      const created = await this.appointments.createFromProposal(
+        tx,
+        { id: p.id, eventId: p.eventId, eventDayId: today.day.id, meetingSpotId: spot.id, senderId: p.senderId, receiverId: p.receiverId },
+        { date: schedule.date, startTime: schedule.startTime, endTime: schedule.endTime, segments: [] },
+        spot.name,
+        undefined,
+        { freeCancelAt: schedule.freeCancelAt },
+      );
+      await this.instant.turnOffMany(tx, [p.senderId, userId], p.eventId);
+      const receiver = await tx.user.findUniqueOrThrow({ where: { id: userId }, select: { nickname: true } });
+      const event = await tx.event.findUniqueOrThrow({ where: { id: p.eventId }, select: { name: true } });
+      await this.notifications.notify(
+        tx,
+        p.senderId,
+        'PROPOSAL_ACCEPTED',
+        { nickname: receiver.nickname ?? '', eventName: event.name, when: schedule.startTime, spotName: spot.name },
+        { appointmentId: created.id },
+        { urgent: true },
+      );
+      return created;
+    });
+    return this.appointments.get(userId, appointment.id);
+  }
+
+  /** 수락하면 약속이 만들어집니다. (확정 대기. 즉석 제안은 바로 확정) */
   async accept(userId: string, id: string): Promise<AppointmentView> {
     const p = await this.mine(userId, id, 'receiver');
+    if (p.kind === 'INSTANT') return this.acceptInstant(userId, p);
     await this.assertNotRestricted(userId);
     // 받는 사람도 인증(또는 참석 예정)을 마쳐야 수락할 수 있습니다.
     if (!(await this.gradeFor(userId, p.eventId))) {

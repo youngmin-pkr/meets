@@ -101,6 +101,8 @@ export interface ProposalView {
   consent: { agreed: number; total: number; members: Array<{ userId: string; nickname: string; agreed: boolean; isMe: boolean }>; needsMyAgreement: boolean } | null;
   /** 내가 취소할 수 있는지 (보낸 사람, 또는 보낸 일행의 일행원) */
   canCancel: boolean;
+  /** 즉석 제안이면 만나는 시간(분). 개인 제안·일행 제안이면 null */
+  instant: { minutes: number } | null;
 }
 
 /** 제안 보내기 입력 */

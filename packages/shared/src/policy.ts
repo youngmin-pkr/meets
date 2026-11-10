@@ -122,6 +122,12 @@ export const POLICY_DEFAULTS = {
   INSTANT_WINDOW_MINUTES: 60,
   /** 즉석 동행: 함께할 수 있는 시간이 최소 이만큼(분)은 겹쳐야 후보. 2026-11-10 제안, 사용자 확인 */
   INSTANT_MIN_OVERLAP_MINUTES: 30,
+  /** 즉석 제안 만료(분) (정리문서 정책 값 3) */
+  INSTANT_PROPOSAL_EXPIRE_MINUTES: 10,
+  /** 즉석 약속: 수락한 뒤 이만큼(분) 뒤에 시작 (만나러 가는 시간). 2026-11-10 제안, 사용자 확인 */
+  INSTANT_START_DELAY_MINUTES: 15,
+  /** 즉석 약속: 수락 후 이 시간(분) 안에 취소하면 신뢰 단계에 영향 없음. 그 뒤 시작 전 취소는 임박 취소. 2026-11-10 제안, 사용자 확인 */
+  INSTANT_FREE_CANCEL_MINUTES: 10,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;

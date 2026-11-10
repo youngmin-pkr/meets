@@ -146,3 +146,52 @@ export interface InstantStyleInput {
   immersionAnswers: Array<1 | 2 | 3>;
 }
 
+
+// ───────────── 즉석 제안과 즉석 약속 (10-2단계) ─────────────
+
+/** 즉석 제안에서 고를 수 있는 만나는 시간(분) */
+export const INSTANT_DURATIONS = [30, 60] as const;
+export type InstantDuration = (typeof INSTANT_DURATIONS)[number];
+
+/** 즉석 제안 보내기 입력: 지금부터 N분 만나요 + 만날 장소 (공개된 장소) */
+export interface InstantProposalInput {
+  receiverId: string;
+  meetingSpotId: string;
+  minutes: InstantDuration;
+}
+
+export interface InstantSchedule {
+  date: string;
+  startTime: string;
+  endTime: string;
+  startsAt: Date;
+  endsAt: Date;
+  /** 이 시각까지 취소하면 신뢰 단계에 영향 없음 */
+  freeCancelAt: Date;
+}
+
+/**
+ * 수락하는 순간 정해지는 즉석 약속 시간: 수락한 뒤 N분(만나러 가는 시간) 뒤에 시작해서 고른 시간만큼 만나되,
+ * 행사 끝·22시를 넘기지 않습니다. 남는 시간이 최소 겹침(30분)보다 짧으면 null (만날 수 없음)
+ */
+export function instantSchedule(
+  now: Date,
+  day: { date: string; endTime: string },
+  minutes: number,
+  p: { startDelayMinutes: number; freeCancelMinutes: number; endHour: number; minOverlapMinutes: number },
+): InstantSchedule | null {
+  const startsAt = new Date(Math.ceil((now.getTime() + p.startDelayMinutes * MINUTE) / MINUTE) * MINUTE);
+  const hardEnd = seoulDateTime(day.date, `${String(p.endHour).padStart(2, '0')}:00`);
+  const eventEnd = seoulDateTime(day.date, day.endTime);
+  const cap = eventEnd < hardEnd ? eventEnd : hardEnd;
+  const endsAt = new Date(Math.min(startsAt.getTime() + minutes * MINUTE, cap.getTime()));
+  if (seoulDateOf(startsAt) !== day.date || (endsAt.getTime() - startsAt.getTime()) / MINUTE < p.minOverlapMinutes) return null;
+  return {
+    date: day.date,
+    startTime: hmOf(startsAt),
+    endTime: hmOf(endsAt),
+    startsAt,
+    endsAt,
+    freeCancelAt: new Date(now.getTime() + p.freeCancelMinutes * MINUTE),
+  };
+}

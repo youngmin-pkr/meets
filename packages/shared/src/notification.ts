@@ -93,7 +93,9 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
     case 'PROPOSAL_RECEIVED':
       return { title: '새 제안이 왔어요', body: `${nick}이 ${ev} 동행을 제안했어요. ${p.deadline}까지 답해 주세요.` };
     case 'PROPOSAL_ACCEPTED':
-      return { title: '제안이 수락됐어요', body: `${nick}과 ${ev} 약속이 생겼어요. 전날 한 번 더 확인해요.` };
+      return p.when
+        ? { title: '제안이 수락됐어요', body: `${nick}과 바로 만나요. ${p.when}에 ${p.spotName ?? '약속 장소'}에서 만나요. 도착하면 '도착했어요'를 눌러 주세요.` }
+        : { title: '제안이 수락됐어요', body: `${nick}과 ${ev} 약속이 생겼어요. 전날 한 번 더 확인해요.` };
     case 'PROPOSAL_REJECTED':
       return { title: '이번 제안은 어렵대요', body: `${nick}이 이번 제안은 어렵다고 했어요. 다른 후보를 찾아볼까요?` };
     case 'DAY_BEFORE_CONFIRM':
