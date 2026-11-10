@@ -8,7 +8,10 @@ import {
   immersionLevel,
   manAge,
   matchCandidates,
+  matchPartyCandidates,
+  combineProfiles,
   parseCalendarDate,
+  passesMust,
   PREFERENCE_PROBLEM_MESSAGES,
   PROMISE_SHORT_LABELS,
   tempoLevel,
@@ -278,6 +281,78 @@ export class MatchingService {
       reasons: explainMatch(c, days, PROMISE_SHORT_LABELS),
       publicFandoms: u.fandomPublic ? u.fandoms : [],
     };
+  }
+
+  /**
+   * 일행 후보 (정리문서 3장 "일행과 청소년"). 일행 전원이 입력을 마친 뒤에만 부릅니다.
+   * 서로 차단한 사람은 일행 중 누구와든 후보에서 숨깁니다.
+   */
+  private async partyContext(partyKey: string, memberIds: string[], eventId: string) {
+    const { days } = await this.visibleEvent(eventId);
+    const all = await this.profiles(eventId);
+    const found = memberIds.map((id) => all.profiles.find((p) => p.userId === id));
+    if (found.some((m) => !m)) throw new AppError('PREFERENCE_REQUIRED', '일행 전원이 일정과 스타일을 입력해야 해요.');
+    const blocked = new Set<string>();
+    for (const id of memberIds) for (const b of await blockedWith(this.prisma, id)) blocked.add(b);
+    const members: MatchProfile[] = [];
+    for (const m of found as MatchProfile[]) members.push({ ...m, reunionWith: await this.reunionWith(m.userId, blocked) });
+    const today = isoOf(this.today());
+    return {
+      partyKey,
+      members,
+      days: days.filter((d) => d.date >= today),
+      profiles: all.profiles.filter((p) => !blocked.has(p.userId)),
+      users: all.users,
+      policy: await this.matchPolicy(),
+    };
+  }
+
+  async partyCandidates(partyKey: string, memberIds: string[], eventId: string, options: MatchOptions): Promise<CandidatesResponse> {
+    const c = await this.partyContext(partyKey, memberIds, eventId);
+    const result = matchPartyCandidates(c.partyKey, c.members, c.profiles, c.days, c.policy, options);
+    const cards = result.candidates.map((x) => this.toCard(x, c.users));
+    const combined = combineProfiles(c.partyKey, c.members, c.days);
+    return {
+      total: cards.length,
+      immersionRelaxed: result.immersionRelaxed,
+      candidates: cards,
+      widen:
+        cards.length === 0
+          ? expectedCounts(
+              combined,
+              c.profiles.filter((p) => !memberIds.includes(p.userId) && c.members.every((m) => passesMust(m, p))),
+              c.days,
+              c.policy,
+              options,
+            )
+          : null,
+    };
+  }
+
+  async partyCandidateDetail(partyKey: string, memberIds: string[], eventId: string, candidateId: string): Promise<CandidateDetail> {
+    const c = await this.partyContext(partyKey, memberIds, eventId);
+    const result = matchPartyCandidates(c.partyKey, c.members, c.profiles, c.days, c.policy, { shortTime: true, immersionPlus: true });
+    const hit = result.candidates.find((x) => x.userId === candidateId);
+    if (!hit) throw new AppError('NOT_FOUND', '후보를 찾을 수 없어요.');
+    const u = c.users.get(hit.userId)!;
+    return { ...this.toCard(hit, c.users), reasons: explainMatch(hit, c.days, PROMISE_SHORT_LABELS), publicFandoms: u.fandomPublic ? u.fandoms : [] };
+  }
+
+  /** 입력을 마쳤는지(일정·스타일, 티켓 인증 또는 참석 예정) 사람별로 */
+  async inputFacts(eventId: string, userIds: string[]): Promise<Map<string, { hasPreference: boolean; grade: 'VERIFIED' | 'PLANNED' | null }>> {
+    const [prefs, tickets, plans] = await Promise.all([
+      this.prisma.preference.findMany({ where: { eventId, userId: { in: userIds } }, select: { userId: true } }),
+      this.prisma.ticketVerification.findMany({ where: { eventId, userId: { in: userIds }, status: { in: ['VERIFIED'] } }, select: { userId: true } }),
+      this.prisma.attendancePlan.findMany({ where: { eventId, userId: { in: userIds } }, select: { userId: true } }),
+    ]);
+    const out = new Map<string, { hasPreference: boolean; grade: 'VERIFIED' | 'PLANNED' | null }>();
+    for (const id of userIds) {
+      out.set(id, {
+        hasPreference: prefs.some((p) => p.userId === id),
+        grade: tickets.some((t) => t.userId === id) ? 'VERIFIED' : plans.some((p) => p.userId === id) ? 'PLANNED' : null,
+      });
+    }
+    return out;
   }
 
   /** 후보 없음 → 알림 신청 (행사 3일 전까지) */

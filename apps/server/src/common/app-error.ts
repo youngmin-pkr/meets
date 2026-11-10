@@ -53,7 +53,12 @@ export type AppErrorCode =
   | 'REASON_REQUIRED'
   | 'RESTRICTED'
   | 'SAFETY_NOT_NOW'
-  | 'SHARE_NOT_ALLOWED';
+  | 'SHARE_NOT_ALLOWED'
+  | 'PARTY_EXISTS'
+  | 'PARTY_STATE'
+  | 'PARTY_NOT_READY'
+  | 'PARTY_ADULT_ONLY'
+  | 'INVITE_UNAVAILABLE';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -107,6 +112,11 @@ const STATUS: Record<AppErrorCode, number> = {
   RESTRICTED: 403,
   SAFETY_NOT_NOW: 409,
   SHARE_NOT_ALLOWED: 409,
+  PARTY_EXISTS: 409,
+  PARTY_STATE: 409,
+  PARTY_NOT_READY: 409,
+  PARTY_ADULT_ONLY: 403,
+  INVITE_UNAVAILABLE: 404,
 };
 
 export class AppError extends Error {

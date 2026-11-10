@@ -42,6 +42,9 @@ import { PrismaService } from './prisma/prisma.service';
 import { SafetyChecksService } from './safety/safety-checks.service';
 import { SafetyController, SharedLinkController } from './safety/safety.controller';
 import { SafetyService } from './safety/safety.service';
+import { PartiesController } from './parties/parties.controller';
+import { PartiesService } from './parties/parties.service';
+import { PartyStateService } from './parties/party-state.service';
 import { SignupController } from './signup/signup.controller';
 import { SignupService } from './signup/signup.service';
 
@@ -50,7 +53,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController, AdminReportsController, SafetyController, SharedLinkController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController, AdminReportsController, SafetyController, SharedLinkController, PartiesController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -89,6 +92,8 @@ export class AppModule {
         AdminReportsService,
         SafetyChecksService,
         SafetyService,
+        PartyStateService,
+        PartiesService,
       ],
     };
   }

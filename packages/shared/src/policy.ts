@@ -104,6 +104,14 @@ export const POLICY_DEFAULTS = {
   SAFETY_CHECK_REASK_MINUTES: 10,
   /** 믿는 사람에게 보내는 링크는 약속이 끝나고 몇 시간 뒤 사라지는지 (정책 값 9) */
   SHARE_LINK_EXPIRE_HOURS_AFTER_END: 6,
+  /** 일행 최소 인원 (정리문서 2장: 2~4명) */
+  PARTY_MIN_SIZE: 2,
+  /** 일행 최대 인원 */
+  PARTY_MAX_SIZE: 4,
+  /** 일행 초대 링크 유효 시간(시간). 2026-11-10 제안, 사용자 확인 */
+  PARTY_INVITE_EXPIRE_HOURS: 48,
+  /** 합류한 친구가 입력을 안 했을 때 재촉 알림을 보내는 시점(합류 후 몇 시간). 재촉은 1번만 (정리문서 8장) */
+  PARTY_INPUT_REMIND_HOURS: 24,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;
