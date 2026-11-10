@@ -18,11 +18,13 @@ const HOUR = 60 * 60 * 1000;
  * @param endedAt 약속이 끝난(취소·중간 종료·자동 종료된) 시각
  */
 export function chatClosesAt(
-  a: { status: AppointmentStatus; endsAt: Date; endedAt: Date | null; extended?: boolean },
+  a: { status: AppointmentStatus; endsAt: Date; endedAt: Date | null; extended?: boolean; endedBySafety?: boolean },
   policy: { closeHoursAfterEnd: number },
 ): Date | null {
   // 서로 '또 같이 가고 싶어요'를 골랐으면 만남이 끝난 뒤에도 닫히지 않습니다. (2026-11-09 사용자 확인)
   if (a.extended && a.status === 'ENDED') return null;
+  // 도움 요청('벗어나고 싶어요')으로 끝난 약속은 채팅이 바로 닫힙니다. 벗어난 사람에게 메시지가 오지 않도록. (2026-11-10 사용자 확인)
+  if (a.endedBySafety && a.endedAt) return a.endedAt;
   const after = (d: Date) => new Date(d.getTime() + policy.closeHoursAfterEnd * HOUR);
   switch (a.status) {
     case 'ENDED':

@@ -29,6 +29,8 @@ export class NotificationsService {
     kind: NotificationKind,
     params: NotificationParams,
     target: { appointmentId?: string; proposalId?: string } = {},
+    /** 안전 확인처럼 방해 금지 시간에도 바로 보내야 하는 알림 */
+    options: { urgent?: boolean } = {},
   ) {
     const q = await this.policy.getNumbers(['NOTIFY_QUIET_START_HOUR', 'NOTIFY_QUIET_END_HOUR']);
     const now = this.clock.now();
@@ -41,7 +43,7 @@ export class NotificationsService {
         body,
         appointmentId: target.appointmentId ?? null,
         proposalId: target.proposalId ?? null,
-        pushAt: pushAvailableAt(now, q.NOTIFY_QUIET_START_HOUR, q.NOTIFY_QUIET_END_HOUR),
+        pushAt: options.urgent ? now : pushAvailableAt(now, q.NOTIFY_QUIET_START_HOUR, q.NOTIFY_QUIET_END_HOUR),
       },
     });
   }

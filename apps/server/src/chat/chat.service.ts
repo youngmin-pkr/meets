@@ -51,10 +51,10 @@ export class ChatService {
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
-  private async closesAtOf(a: { status: string; date: string; endTime: string; endedAt: Date | null; chatExtended: boolean }) {
+  private async closesAtOf(a: { status: string; date: string; endTime: string; endedAt: Date | null; chatExtended: boolean; endReason: string | null }) {
     const hours = await this.policy.getNumber('CHAT_CLOSE_HOURS_AFTER_END');
     return chatClosesAt(
-      { status: a.status as AppointmentStatus, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended },
+      { status: a.status as AppointmentStatus, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended, endedBySafety: a.endReason === 'SAFETY' },
       { closeHoursAfterEnd: hours },
     );
   }

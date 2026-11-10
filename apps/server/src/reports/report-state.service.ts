@@ -17,10 +17,12 @@ export class ReportStateService {
   async createQueued(
     tx: Prisma.TransactionClient,
     data: { reporterId: string; targetId: string; appointmentId: string; category: Prisma.ReportUncheckedCreateInput['category']; detail: string | null },
+    /** 도움 요청이면 가장 높은 우선순위로 접수 */
+    options: { help?: boolean } = {},
   ) {
     const users = await tx.user.findMany({ where: { id: { in: [data.reporterId, data.targetId] } }, select: { id: true, ageClass: true } });
     const isTeen = (id: string) => users.find((u) => u.id === id)?.ageClass === 'TEEN';
-    const priority = reportPriority({ reporterIsTeen: isTeen(data.reporterId), targetIsTeen: isTeen(data.targetId) });
+    const priority = reportPriority({ help: options.help, reporterIsTeen: isTeen(data.reporterId), targetIsTeen: isTeen(data.targetId) });
     const created = await tx.report.create({ data: { ...data, priority, status: 'RECEIVED' } });
     await this.transition(tx, created.id, 'RECEIVED', 'QUEUED');
     return { id: created.id, priority };

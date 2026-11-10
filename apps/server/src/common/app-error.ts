@@ -51,7 +51,9 @@ export type AppErrorCode =
   | 'REPORT_EXISTS'
   | 'REPORT_STATE'
   | 'REASON_REQUIRED'
-  | 'RESTRICTED';
+  | 'RESTRICTED'
+  | 'SAFETY_NOT_NOW'
+  | 'SHARE_NOT_ALLOWED';
 
 const STATUS: Record<AppErrorCode, number> = {
   UNAUTHORIZED: 401,
@@ -103,6 +105,8 @@ const STATUS: Record<AppErrorCode, number> = {
   REPORT_STATE: 409,
   REASON_REQUIRED: 400,
   RESTRICTED: 403,
+  SAFETY_NOT_NOW: 409,
+  SHARE_NOT_ALLOWED: 409,
 };
 
 export class AppError extends Error {

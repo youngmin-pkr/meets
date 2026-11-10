@@ -15,3 +15,4 @@ export * from './chat';
 export * from './review';
 export * from './trust';
 export * from './report';
+export * from './safety';

@@ -24,6 +24,7 @@ function view(o: Partial<AppointmentView> = {}): AppointmentView {
     needsAction: false,
     unreadMessages: 0,
     review: { canWrite: false, done: false, deadline: '2026-12-20T08:00:00.000Z' },
+    safety: { canRequestHelp: false, pendingCheck: null },
     ...o,
   };
 }

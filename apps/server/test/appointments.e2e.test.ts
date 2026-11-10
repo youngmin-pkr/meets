@@ -140,6 +140,7 @@ describe('약속 상태 전이 표 (정리문서 5장)', () => {
     ['CONFIRMED', 'IN_PROGRESS'],
     ['IN_PROGRESS', 'ENDED'],
     ['IN_PROGRESS', 'ENDED_EARLY'],
+    ['CONFIRMED', 'ENDED_EARLY'],
     ['CONFIRMED', 'RESCHEDULING'],
     ['PENDING_CONFIRM', 'RESCHEDULING'],
     ['RESCHEDULING', 'CONFIRMED'],

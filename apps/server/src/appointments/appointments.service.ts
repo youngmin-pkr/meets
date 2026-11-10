@@ -2,6 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   ACTIVE_APPOINTMENT_STATUSES,
   arrivedLine,
+  canRequestHelp,
+  type HelpResult,
   APPOINTMENT_POLICY_KEYS,
   appointmentActions,
   appointmentPolicyFrom,
@@ -34,6 +36,7 @@ import type { Prisma } from '../generated/prisma/client';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PolicyService } from '../policy/policy.service';
 import { ReportStateService } from '../reports/report-state.service';
+import { SafetyChecksService } from '../safety/safety-checks.service';
 import { TrustService } from '../trust/trust.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppointmentStateService } from './appointment-state.service';
@@ -45,6 +48,7 @@ const include = {
   event: { select: { id: true, name: true } },
   eventDay: { include: { segments: { orderBy: { sortOrder: 'asc' } } } },
   reviews: { select: { authorId: true } },
+  safetyChecks: { select: { id: true, userId: true, seq: true, askedAt: true, answeredAt: true } },
 } satisfies Prisma.AppointmentInclude;
 
 type Row = Prisma.AppointmentGetPayload<{ include: typeof include }>;
@@ -148,6 +152,7 @@ export class AppointmentsService {
     private readonly notifications: NotificationsService,
     private readonly trust: TrustService,
     private readonly reports: ReportStateService,
+    private readonly safetyChecks: SafetyChecksService,
     @Inject(CLOCK) private readonly clock: Clock,
   ) {}
 
@@ -209,6 +214,8 @@ export class AppointmentsService {
         }
       }
     }
+    // 만남 중인 약속은 안전 확인도 챙깁니다. (정해진 시각에 묻고, 답이 없으면 다시 묻고, 믿는 사람에게 알림)
+    await this.safetyChecks.run(rows.map((r) => r.id));
   }
 
   settleForUser(userId: string) {
@@ -293,7 +300,9 @@ export class AppointmentsService {
     const snap = snapshotOf(a);
     const ns = a.status === 'RESCHEDULING' ? scheduleOnDay(snap, a.eventDay) : null;
     const actions = appointmentActions(f, me, now, { newScheduleAvailable: !!ns });
-    const reason = a.endReason as AppointmentEndReason | null;
+    // 도움 요청으로 끝난 약속은 화면에서 이유를 드러내지 않고 '취소'로만 보입니다.
+    const reason = (a.endReason === 'SAFETY' ? 'CANCELLED' : a.endReason) as AppointmentEndReason | null;
+    const pendingCheck = a.status === 'IN_PROGRESS' ? a.safetyChecks.filter((c) => c.userId === me && !c.answeredAt).sort((x, y) => y.seq - x.seq)[0] : undefined;
     const byMe =
       reason === 'CANCELLED' ? a.cancelledById === me : reason === 'NO_CONFIRM' ? mine.noResponse : reason === 'NO_SHOW' ? !!mine.noShowReportedAt : false;
     return {
@@ -333,9 +342,15 @@ export class AppointmentsService {
           }
         : null,
       actions,
-      needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
+      needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow || !!pendingCheck,
       unreadMessages,
       review: reviewState(a, me, now, reviewDays, t.endsAt),
+      safety: {
+        canRequestHelp: canRequestHelp(a.status as AppointmentStatus, now, { startsAt: t.startsAt, endsAt: t.endsAt }, f.policy.arrivalOpenMinutes),
+        pendingCheck: pendingCheck
+          ? { id: pendingCheck.id, askedAt: pendingCheck.askedAt.toISOString(), minutesSinceStart: Math.max(0, Math.floor((now.getTime() - t.startsAt.getTime()) / 60000)) }
+          : null,
+      },
     };
   }
 
@@ -548,6 +563,72 @@ export class AppointmentsService {
       await this.reports.createQueued(tx, { reporterId: userId, targetId: other.userId, appointmentId: a.id, category: 'NO_SHOW', detail: null });
     });
     return this.get(userId, id);
+  }
+
+  /**
+   * '벗어나고 싶어요' (도움 요청). 도착 버튼이 열린 뒤 약속이 끝날 때까지 누를 수 있습니다.
+   * - 약속을 바로 끝내고 채팅을 닫습니다. 상대에게는 사유 없이 '약속이 취소됐어요'만 알립니다.
+   * - 운영팀에는 가장 높은 우선순위(도움 요청)로 접수합니다. 차단은 따로 정하지 않습니다.
+   * - 믿는 사람 알림을 미리 켜 둔 경우에만, 내가 만든 링크 화면에 안내가 뜹니다.
+   * TODO(11단계): 청소년이면 보호자 알림으로 이어집니다.
+   */
+  async requestHelp(userId: string, id: string): Promise<HelpResult> {
+    await this.settle({ id });
+    const a = await this.load(userId, id);
+    const now = this.clock.now();
+    const t = rangeOf(a.date, a.startTime, a.endTime);
+    if (!canRequestHelp(a.status as AppointmentStatus, now, t, factsOf(a).policy.arrivalOpenMinutes)) {
+      throw new AppError('SAFETY_NOT_NOW', '지금은 도움 요청을 쓸 수 없어요. 나중에 문제가 있었다면 신고로 알려 주세요.');
+    }
+    const other = a.participants.find((p) => p.userId !== userId)!;
+    const me = await this.prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { safetyAlertTrusted: true } });
+    await this.prisma.$transaction(async (tx) => {
+      await this.lock(tx, a.id);
+      await this.state.transition(tx, a.id, a.status as AppointmentStatus, 'ENDED_EARLY', {
+        endReason: 'SAFETY' satisfies 'SAFETY',
+        cancelledById: userId,
+      });
+      await tx.appointmentParticipant.update({
+        where: { appointmentId_userId: { appointmentId: a.id, userId } },
+        data: { cancelledAt: now, lateCancel: false },
+      });
+      await tx.safetyCheck.updateMany({
+        where: { appointmentId: a.id, userId, answeredAt: null },
+        data: { answeredAt: now, answer: 'HELP' },
+      });
+      if (me.safetyAlertTrusted) {
+        await tx.shareLink.updateMany({
+          where: { creatorId: userId, appointmentId: a.id, revokedAt: null },
+          data: { alertKind: 'HELP', alertAt: now },
+        });
+      }
+      await this.notifications.notify(
+        tx,
+        other.userId,
+        'APPOINTMENT_CANCELLED',
+        { nickname: this.nickname(a, userId), eventName: a.event.name, reason: null },
+        { appointmentId: a.id },
+      );
+      await this.reports.createQueued(
+        tx,
+        { reporterId: userId, targetId: other.userId, appointmentId: a.id, category: 'HELP_REQUEST', detail: null },
+        { help: true },
+      );
+    });
+    return { ended: true, reported: true, trustedNotified: me.safetyAlertTrusted };
+  }
+
+  /** 안전 확인에 답하기. '네, 괜찮아요'는 기록만 하고, '도움이 필요해요'는 도움 요청으로 이어집니다. */
+  async answerSafetyCheck(userId: string, appointmentId: string, checkId: string, answer: 'OK' | 'HELP'): Promise<AppointmentView | HelpResult> {
+    await this.settle({ id: appointmentId });
+    const check = await this.prisma.safetyCheck.findFirst({ where: { id: checkId, appointmentId, userId } });
+    if (!check) throw new AppError('NOT_FOUND', '확인 요청을 찾을 수 없어요.');
+    if (answer === 'HELP') return this.requestHelp(userId, appointmentId);
+    await this.prisma.safetyCheck.updateMany({
+      where: { id: check.id, answeredAt: null },
+      data: { answeredAt: this.clock.now(), answer: 'OK' },
+    });
+    return this.get(userId, appointmentId);
   }
 
   // ───────────── 행사가 바뀌거나 취소될 때 (운영 콘솔에서 부름) ─────────────
