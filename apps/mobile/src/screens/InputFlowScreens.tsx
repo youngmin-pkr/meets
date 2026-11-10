@@ -30,7 +30,7 @@ import {
   type PreferenceDraft,
 } from '../preferenceDraft';
 import { colors } from '../theme';
-import { Body, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, StepHeader, styles, TimeStepper, Title } from '../ui';
+import { Body, ChoiceRow, ErrorText, keepWords, Page, Pill, PrimaryButton, StepHeader, styles, TimeField, Title } from '../ui';
 
 const TOTAL = 4;
 
@@ -113,15 +113,15 @@ export function ScheduleScreen(props: {
             </Text>
           ) : null}
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <TimeStepper
+            <TimeField
               label="도착 가능 시간"
               value={plan.arriveTime}
               min={active.startTime}
               max={active.endTime}
               onChange={(v) => props.onChange(updateDay(draft, active.id, { arriveTime: v }))}
             />
-            <TimeStepper
-              label="귀가 마감 (막차)"
+            <TimeField
+              label="귀가 마감 시간"
               value={plan.leaveTime}
               min={active.startTime}
               max="23:30"

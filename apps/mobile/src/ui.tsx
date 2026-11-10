@@ -1,16 +1,114 @@
 /** 여러 화면에서 같이 쓰는 버튼·제목 같은 조각 */
-import type { ReactNode } from 'react';
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
+import { useEffect, useMemo, useRef, useState, type ComponentRef, type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  Dimensions,
+  Keyboard,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type TextStyle,
+} from 'react-native';
 import { colors } from './theme';
+import { timeOptions } from './timeOptions';
+
+/**
+ * 키보드가 화면을 가리는 높이를 알려 줍니다. (키보드가 없으면 0)
+ * - 아이폰: 키보드가 올라오기 시작하는 순간에 바로 알려 줘서 입력 칸이 늦게 올라오지 않습니다.
+ * - 안드로이드: 키보드가 다 올라온 뒤에 알려 줍니다.
+ * - 웹(휴대폰 브라우저): 화면에서 실제로 보이는 영역(visualViewport)의 변화를 읽습니다.
+ */
+export function useKeyboardInset(): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+      if (!vv) return undefined;
+      const update = () => setInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+      update();
+      vv.addEventListener('resize', update);
+      vv.addEventListener('scroll', update);
+      return () => {
+        vv.removeEventListener('resize', update);
+        vv.removeEventListener('scroll', update);
+      };
+    }
+    const ios = Platform.OS === 'ios';
+    const subs = [
+      Keyboard.addListener(ios ? 'keyboardWillChangeFrame' : 'keyboardDidShow', (e) => {
+        const top = e.endCoordinates.screenY;
+        setInset(ios ? Math.max(0, Dimensions.get('screen').height - top) : e.endCoordinates.height);
+      }),
+      Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', () => setInset(0)),
+    ];
+    return () => subs.forEach((x) => x.remove());
+  }, []);
+  return inset;
+}
+
+/** 키보드 높이만큼 아래를 비워서, 안쪽 내용(입력 칸·다음 버튼)이 키보드 위로 올라오게 합니다. */
+export function KeyboardLift({ children }: { children: ReactNode }) {
+  const inset = useKeyboardInset();
+  return <View style={{ flex: 1, paddingBottom: inset }}>{children}</View>;
+}
 
 export function Page({ children, footer, tabBar }: { children: ReactNode; footer?: ReactNode; tabBar?: ReactNode }) {
+  const inset = useKeyboardInset();
+  const open = inset > 0;
   return (
-    <View style={styles.page}>
+    <View style={[styles.page, { paddingBottom: inset }]}>
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         {children}
       </ScrollView>
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
-      {tabBar}
+      {/* 키보드가 열려 있으면 '다음' 버튼이 키보드 바로 위에 붙도록 아래 여백을 줄입니다. */}
+      {footer ? <View style={[styles.footer, open && { paddingBottom: 12 }]}>{footer}</View> : null}
+      {open ? null : tabBar}
+    </View>
+  );
+}
+
+/** 가로로 넘기는 영역(홈 이미지 등) 안에서 시작한 손동작은 화면 넘기기로 보지 않도록 표시합니다. */
+export const swipeGuard = { blocked: false };
+export const swipeGuardProps = {
+  onTouchStart: () => {
+    swipeGuard.blocked = true;
+  },
+  onTouchEnd: () => {
+    swipeGuard.blocked = false;
+  },
+  onTouchCancel: () => {
+    swipeGuard.blocked = false;
+  },
+};
+
+/** 화면을 옆으로 밀면 다른 화면으로 넘어가게 합니다. (왼쪽으로 밀기=onSwipeLeft, 오른쪽으로 밀기=onSwipeRight) */
+export function SwipeNav(props: { onSwipeLeft?: () => void; onSwipeRight?: () => void; children: ReactNode }) {
+  const handlers = useRef(props);
+  handlers.current = props;
+  const pan = useMemo(
+    () =>
+      PanResponder.create({
+        // 세로 스크롤은 그대로 두고, 확실히 가로로 움직일 때만 가져옵니다.
+        onMoveShouldSetPanResponderCapture: (_e, g) =>
+          !swipeGuard.blocked && Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+        onPanResponderRelease: (_e, g) => {
+          const far = Math.abs(g.dx) > 70 || Math.abs(g.vx) > 0.6;
+          if (!far || Math.abs(g.dx) < 40 || Math.abs(g.dx) < Math.abs(g.dy) * 2) return;
+          if (g.dx < 0) handlers.current.onSwipeLeft?.();
+          else handlers.current.onSwipeRight?.();
+        },
+        onPanResponderTerminationRequest: () => false,
+      }),
+    [],
+  );
+  return (
+    <View style={{ flex: 1 }} {...pan.panHandlers}>
+      {props.children}
     </View>
   );
 }
@@ -250,42 +348,86 @@ export function Pill(props: { label: string; selected: boolean; onPress: () => v
   );
 }
 
-/** 30분 단위로 시간 고르기 */
-export function TimeStepper(props: { label: string; value: string; min: string; max: string; onChange: (v: string) => void }) {
-  const toM = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
-  const toT = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-  const v = toM(props.value);
-  const step = (d: number) => props.onChange(toT(Math.min(toM(props.max), Math.max(toM(props.min), v + d))));
-  const btn = (text: string, d: number, label: string, disabled: boolean) => (
-    <Pressable
-      onPress={() => step(d)}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', opacity: disabled ? 0.3 : 1 }}
-    >
-      <Text style={{ fontSize: 20, fontWeight: '700', color: colors.ink }}>{text}</Text>
-    </Pressable>
-  );
+const ROW = 44;
+const ROWS_SHOWN = 5;
+/**
+ * 시간 고르기: 칸을 누르면 아래에서 메뉴가 올라오고, 시간을 위아래로 밀어서 고릅니다. (30분 단위)
+ */
+export function TimeField(props: { label: string; value: string; min: string; max: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const options = useMemo(() => timeOptions(props.min, props.max, props.value), [props.min, props.max, props.value]);
+  const [picked, setPicked] = useState(props.value);
+  const scroll = useRef<ComponentRef<typeof ScrollView>>(null);
+
+  function show() {
+    setPicked(props.value);
+    setOpen(true);
+  }
+  function moveTo(t: string, animated: boolean) {
+    scroll.current?.scrollTo({ y: options.indexOf(t) * ROW, animated });
+  }
+  function confirm() {
+    props.onChange(picked);
+    setOpen(false);
+  }
+
   return (
     <View style={{ flex: 1, gap: 6 }}>
       <Text style={{ fontSize: 12, fontWeight: '700', color: colors.body }}>{props.label}</Text>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          height: 48,
-          borderRadius: 12,
-          borderWidth: 1.5,
-          borderColor: colors.border,
-          backgroundColor: colors.white,
-        }}
+      <Pressable
+        onPress={show}
+        accessibilityRole="button"
+        accessibilityLabel={`${props.label} ${props.value}, 눌러서 바꾸기`}
+        style={{ height: 48, borderRadius: 12, borderWidth: 1.5, borderColor: colors.border, backgroundColor: colors.white, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14 }}
       >
-        {btn('−', -30, `${props.label} 30분 앞으로`, v <= toM(props.min))}
         <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>{props.value}</Text>
-        {btn('+', 30, `${props.label} 30분 뒤로`, v >= toM(props.max))}
-      </View>
+        <Text style={{ fontSize: 12, color: colors.muted }}>▾</Text>
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+          <Pressable style={{ flex: 1 }} onPress={() => setOpen(false)} accessibilityLabel="닫기" />
+          <View style={{ width: '100%', maxWidth: 480, alignSelf: 'center', backgroundColor: colors.white, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 16, paddingBottom: 28, gap: 12 }}>
+            <Text style={{ textAlign: 'center', fontSize: 15, fontWeight: '900', color: colors.ink }}>{props.label}</Text>
+            <View style={{ height: ROW * ROWS_SHOWN }}>
+              {/* 가운데 선택 띠 */}
+              <View pointerEvents="none" style={{ position: 'absolute', left: 20, right: 20, top: ROW * 2, height: ROW, borderRadius: 12, backgroundColor: colors.background }} />
+              <ScrollView
+                ref={scroll}
+                showsVerticalScrollIndicator={false}
+                snapToInterval={ROW}
+                decelerationRate="fast"
+                scrollEventThrottle={16}
+                contentContainerStyle={{ paddingVertical: ROW * 2 }}
+                contentOffset={{ x: 0, y: Math.max(0, options.indexOf(props.value)) * ROW }}
+                onLayout={() => moveTo(picked, false)}
+                onScroll={(e) => {
+                  const i = Math.min(options.length - 1, Math.max(0, Math.round(e.nativeEvent.contentOffset.y / ROW)));
+                  setPicked(options[i]);
+                }}
+              >
+                {options.map((t) => (
+                  <Pressable
+                    key={t}
+                    onPress={() => {
+                      setPicked(t);
+                      moveTo(t, true);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: t === picked }}
+                    style={{ height: ROW, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Text style={{ fontSize: t === picked ? 22 : 17, fontWeight: t === picked ? '900' : '500', color: t === picked ? colors.ink : colors.muted }}>{t}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+            <View style={{ paddingHorizontal: 20 }}>
+              <PrimaryButton label={`${picked} 로 정하기`} onPress={confirm} />
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

@@ -405,12 +405,7 @@ export function WaitScreen(props: { event: EventDetail; dates: string[]; onBack:
 
   return (
     <Page
-      footer={
-        <>
-          <PrimaryButton label="알림 신청하기" onPress={submit} loading={loading} />
-          <TextButton label="조건을 먼저 넓혀 볼게요" onPress={props.onBack} />
-        </>
-      }
+      footer={<PrimaryButton label="알림 신청하기" onPress={submit} loading={loading} />}
     >
       <TopBar label="후보 알림" onBack={props.onBack} />
       <Title>{'후보가 생기면\n알려 드릴게요'}</Title>

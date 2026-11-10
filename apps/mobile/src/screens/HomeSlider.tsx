@@ -6,7 +6,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { describeEventDateRange, type EventSummary } from '@meets/shared';
 import { EventArt } from '../EventArt';
 import { colors } from '../theme';
-import { keepWords } from '../ui';
+import { keepWords, swipeGuardProps } from '../ui';
 
 const HEIGHT = 196;
 
@@ -23,7 +23,7 @@ export function HomeSlider(props: { events: EventSummary[]; onOpenEvent: (e: Eve
 
   return (
     <View onLayout={(e) => setWidth(e.nativeEvent.layout.width)} style={{ gap: 10 }}>
-      <View style={{ height: HEIGHT, borderRadius: 18, overflow: 'hidden' }}>
+      <View style={{ height: HEIGHT, borderRadius: 18, overflow: 'hidden' }} {...swipeGuardProps}>
         {width > 0 ? (
           <ScrollView
             ref={scroll}

@@ -5,7 +5,7 @@
  * 나중에 실시간 연결로 바꿀 때는 useChatMessages만 고치면 됩니다.
  */
 import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   CHAT_QUICK_LATE,
   companionsLabel,
@@ -19,7 +19,7 @@ import {
 } from '@meets/shared';
 import { api, ApiError } from '../api';
 import { colors } from '../theme';
-import { Body, ErrorText, keepWords, Page, PrimaryButton, styles, TabBar, TextButton, Title, TopBar, type Tab } from '../ui';
+import { Body, ErrorText, keepWords, Page, PrimaryButton, styles, TabBar, TextButton, Title, TopBar, useKeyboardInset, type Tab } from '../ui';
 import { Avatar, dateText } from './ProposalScreens';
 
 /** 새 메시지를 확인하는 간격 */
@@ -149,12 +149,18 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
     }
   }
 
+  const keyboard = useKeyboardInset();
+  // 키보드가 올라오거나 내려가면 맨 아래 메시지가 계속 보이게 합니다.
+  useEffect(() => {
+    scroll.current?.scrollToEnd({ animated: false });
+  }, [keyboard]);
+
   const open = chat?.open ?? true;
   const meeting = appointment && (appointment.status === 'CONFIRMED' || appointment.status === 'IN_PROGRESS');
   const max = POLICY_DEFAULTS.CHAT_MESSAGE_MAX_LENGTH;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <View style={{ flex: 1, backgroundColor: colors.background, paddingBottom: keyboard }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: 48, paddingBottom: 10, borderBottomWidth: 1.5, borderBottomColor: colors.border, backgroundColor: colors.white }}>
         <Pressable onPress={props.onBack} accessibilityRole="button" accessibilityLabel="이전 화면" style={[styles.back, { marginLeft: -10 }]}>
           <Text style={styles.backText}>‹</Text>
@@ -209,7 +215,7 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
               <Chip label="조금 늦어요" onPress={() => void send(CHAT_QUICK_LATE)} />
             </View>
           ) : null}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: 10, paddingBottom: 24 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 20, paddingTop: 10, paddingBottom: keyboard > 0 ? 10 : 24 }}>
             <TextInput
               value={text}
               onChangeText={setText}
@@ -235,7 +241,7 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
           <Text style={[{ textAlign: 'center', fontSize: 13, color: colors.body }, keepWords]}>채팅이 닫혔어요. 지난 대화는 읽을 수 있어요.</Text>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
