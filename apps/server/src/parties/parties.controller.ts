@@ -1,13 +1,18 @@
-import { Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { AuthGuard, CurrentUserId } from '../auth/auth.guard';
 import { CandidatesQuery } from '../matching/matching.dto';
+import { SendProposalDto } from '../proposals/proposals.controller';
+import { PartyProposalsService } from './party-proposals.service';
 import { PartiesService } from './parties.service';
 
 /** 사용자 앱: 일행 만들기·초대·합류·빠지기·후보 */
 @Controller()
 @UseGuards(AuthGuard)
 export class PartiesController {
-  constructor(private readonly parties: PartiesService) {}
+  constructor(
+    private readonly parties: PartiesService,
+    private readonly partyProposals: PartyProposalsService,
+  ) {}
 
   @Post('events/:eventId/party')
   create(@CurrentUserId() userId: string, @Param('eventId', ParseUUIDPipe) eventId: string) {
@@ -60,6 +65,24 @@ export class PartiesController {
   @Get('parties/:id/candidates/:candidateId')
   candidate(@CurrentUserId() userId: string, @Param('id', ParseUUIDPipe) id: string, @Param('candidateId', ParseUUIDPipe) candidateId: string) {
     return this.parties.candidateDetail(userId, id, candidateId);
+  }
+
+  /** 일행 제안 초안 만들기 (나머지 일행원이 모두 동의해야 제안이 나감) */
+  @Post('parties/:id/proposals')
+  createProposal(@CurrentUserId() userId: string, @Param('id', ParseUUIDPipe) id: string, @Body() body: SendProposalDto) {
+    return this.partyProposals.create(userId, id, body);
+  }
+
+  @Post('proposals/:id/agree')
+  @HttpCode(200)
+  agree(@CurrentUserId() userId: string, @Param('id', ParseUUIDPipe) id: string) {
+    return this.partyProposals.agree(userId, id);
+  }
+
+  @Post('proposals/:id/decline')
+  @HttpCode(200)
+  decline(@CurrentUserId() userId: string, @Param('id', ParseUUIDPipe) id: string) {
+    return this.partyProposals.decline(userId, id);
   }
 
   @Get('party-invites/:token')

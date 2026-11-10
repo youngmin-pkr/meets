@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentRef } from 'rea
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   CHAT_QUICK_LATE,
+  companionsLabel,
   detectContact,
   formatSeoulShort,
   POLICY_DEFAULTS,
@@ -62,12 +63,13 @@ function useChatMessages(appointmentId: string) {
   return { chat, messages, error, setError, merge, refresh };
 }
 
-function Bubble({ m }: { m: ChatMessageView }) {
+function Bubble({ m, showName }: { m: ChatMessageView; showName?: boolean }) {
   if (m.kind === 'SYSTEM') {
     return <Text style={[{ alignSelf: 'center', textAlign: 'center', fontSize: 11, lineHeight: 16, color: colors.muted, paddingHorizontal: 12 }, keepWords]}>{m.body}</Text>;
   }
   return (
     <View style={{ alignSelf: m.mine ? 'flex-end' : 'flex-start', maxWidth: '78%', gap: 3, alignItems: m.mine ? 'flex-end' : 'flex-start' }}>
+      {showName && !m.mine && m.kind === 'TEXT' && m.senderNickname ? <Text style={{ fontSize: 11, fontWeight: '700', color: colors.body }}>{m.senderNickname}</Text> : null}
       <View
         style={{
           paddingVertical: 10,
@@ -159,7 +161,7 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
         </Pressable>
         {chat ? <Avatar c={chat.counterpart} size={36} /> : null}
         <View style={{ flex: 1, gap: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '900', color: colors.ink }}>{chat ? `${chat.counterpart.nickname}님` : ' '}</Text>
+          <Text style={{ fontSize: 15, fontWeight: '900', color: colors.ink }}>{chat ? companionsLabel(chat) : ' '}</Text>
           <Text numberOfLines={1} style={{ fontSize: 11, color: colors.muted }}>{chat ? `${chat.event.name} · ${dateText(chat.date)} 약속` : ''}</Text>
         </View>
         <Pressable onPress={props.onRules} accessibilityRole="button" accessibilityLabel="채팅 규칙" style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
@@ -179,7 +181,7 @@ export function ChatScreen(props: { appointmentId: string; onBack: () => void; o
         keyboardShouldPersistTaps="handled"
       >
         {messages.map((m) => (
-          <Bubble key={m.id} m={m} />
+          <Bubble key={m.id} m={m} showName={(chat?.companions.length ?? 0) > 1} />
         ))}
       </ScrollView>
       <ErrorText message={error} />
@@ -249,16 +251,20 @@ export function ChatRulesScreen(props: {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** 여러 명이 만나는 약속에서 차단할 사람 */
+  const [targetId, setTargetId] = useState<string | null>(null);
 
   useEffect(() => {
     api.getAppointment(props.appointmentId).then(setAppointment, (e: Error) => setError(e.message));
   }, [props.appointmentId]);
+  const group = (appointment?.companions.length ?? 0) > 1;
+  const target = appointment?.companions.find((c) => c.userId === targetId);
 
   async function block() {
     setError(null);
     setBusy(true);
     try {
-      await api.blockCounterpart(props.appointmentId);
+      await api.blockCounterpart(props.appointmentId, targetId ?? undefined);
       props.onBlocked();
     } catch (e) {
       setError(e instanceof Error ? e.message : '다시 시도해 주세요.');
@@ -266,7 +272,7 @@ export function ChatRulesScreen(props: {
     }
   }
 
-  const nick = appointment ? `${appointment.counterpart.nickname}님` : '상대';
+  const nick = target ? `${target.nickname}님` : appointment ? companionsLabel(appointment) : '상대';
   const rules = [
     ['수락한 뒤에만 열려요', '제안을 수락하기 전에는 대화할 수 없어요.'],
     ['번호·SNS는 보내기 전에 멈춰요', '그래도 보내면 기록이 남고, 반복되면 이용이 제한될 수 있어요.'],
@@ -279,7 +285,9 @@ export function ChatRulesScreen(props: {
         confirming ? (
           <>
             <Text style={[{ textAlign: 'center', fontSize: 13, lineHeight: 20, color: colors.ink }, keepWords]}>
-              {`${nick}을 차단하면 약속이 취소되고 서로 보이지 않아요. ${nick}에게는 차단했다는 알림이 가지 않아요.`}
+              {group
+                ? `${nick}을 차단하면 내가 이 약속에서 빠지고 서로 보이지 않아요. 다른 사람들은 약속을 계속하고, 차단했다는 알림은 가지 않아요.`
+                : `${nick}을 차단하면 약속이 취소되고 서로 보이지 않아요. ${nick}에게는 차단했다는 알림이 가지 않아요.`}
             </Text>
             <PrimaryButton dark label="네, 차단하고 약속을 취소할게요" loading={busy} onPress={block} />
             <TextButton label="아니요" onPress={() => setConfirming(false)} />
@@ -313,13 +321,24 @@ export function ChatRulesScreen(props: {
           >
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>이 대화 신고하기</Text>
           </Pressable>
+          {group && !confirming ? (
+            <View style={{ gap: 8 }}>
+              <Text style={{ fontSize: 13, fontWeight: '700', color: colors.ink }}>차단할 사람</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {appointment.companions.map((c) => (
+                  <Chip key={c.userId} label={`${c.nickname}님`} strong={c.userId === targetId} onPress={() => setTargetId(c.userId)} />
+                ))}
+              </View>
+            </View>
+          ) : null}
           {!confirming ? (
             <Pressable
               onPress={() => setConfirming(true)}
+              disabled={group && !targetId}
               accessibilityRole="button"
-              style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 2, borderColor: colors.ink }}
+              style={{ minHeight: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 2, borderColor: colors.ink, opacity: group && !targetId ? 0.4 : 1 }}
             >
-              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink }}>상대 차단하고 약속 취소</Text>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: colors.ink }}>{group ? '차단하고 이 약속에서 빠지기' : '상대 차단하고 약속 취소'}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -359,7 +378,7 @@ export function ChatListScreen(props: { onOpen: (appointmentId: string) => void;
             <Avatar c={c.counterpart} />
             <View style={{ flex: 1, gap: 2 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={{ fontSize: 15, fontWeight: '900', color: colors.ink }}>{`${c.counterpart.nickname}님`}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '900', color: colors.ink }}>{companionsLabel(c)}</Text>
                 {!c.open ? <Text style={{ fontSize: 11, fontWeight: '700', color: colors.muted }}>닫힘</Text> : null}
               </View>
               <Text numberOfLines={1} style={{ fontSize: 12, color: colors.muted }}>{`${c.event.name} · ${dateText(c.date)}`}</Text>

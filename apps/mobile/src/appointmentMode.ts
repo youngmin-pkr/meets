@@ -2,7 +2,7 @@
  * 약속 화면에서 지금 무엇을 보여 줄지 정하는 규칙 (화면 코드와 분리해서 테스트합니다)
  * 누를 수 있는 버튼(actions)은 서버가 정해서 보내 주고, 여기서는 그것을 화면 모양으로 바꾸기만 합니다.
  */
-import { formatSeoulShort, type AppointmentView } from '@meets/shared';
+import { companionsLabel, formatSeoulShort, type AppointmentView } from '@meets/shared';
 
 export type AppointmentMode =
   /** 확정 대기, 전날 확인 전 */
@@ -37,7 +37,7 @@ export function appointmentMode(a: AppointmentView): AppointmentMode {
 
 /** 화면 위쪽 안내 (제목과 설명) */
 export function appointmentHeadline(a: AppointmentView, opts: { justAccepted?: boolean; today?: string } = {}): { title: string; body: string } {
-  const nick = `${a.counterpart.nickname}님`;
+  const nick = companionsLabel(a);
   switch (appointmentMode(a)) {
     case 'WAITING_DAY_BEFORE':
       return { title: opts.justAccepted ? '약속이 만들어졌어요' : `${nick}과의 약속`, body: '아직 확정은 아니에요. 전날 한 번 더 확인해요.' };
@@ -50,6 +50,9 @@ export function appointmentHeadline(a: AppointmentView, opts: { justAccepted?: b
     case 'MEETING':
       return { title: '만남 중이에요', body: '도착하면 도착 기록을 남겨 주세요. 연락처는 공개되지 않아요.' };
     case 'RESCHEDULE':
+      if (a.reschedule?.reason === 'MEMBERS_CHANGED') {
+        return { title: '함께하는 사람이 바뀌었어요', body: '약속에서 한 명이 빠졌어요. 남은 사람끼리 이 약속에 갈 수 있는지 다시 확인해 주세요.' };
+      }
       return a.reschedule?.newSchedule
         ? { title: '행사 일정이 바뀌었어요', body: '바뀐 일정으로도 갈 수 있는지 둘 다 다시 알려 주세요.' }
         : { title: '약속한 날이 행사에서 빠졌어요', body: '이 약속은 다시 정할 수 없어요. 기한이 지나면 보류돼요.' };
@@ -66,7 +69,7 @@ function whenWord(a: AppointmentView, today?: string) {
 }
 
 function closedHeadline(a: AppointmentView): { title: string; body: string } {
-  const nick = `${a.counterpart.nickname}님`;
+  const nick = companionsLabel(a);
   if (a.status === 'ENDED') return { title: '만남이 끝났어요', body: '함께해서 즐거웠길 바라요.' };
   const end = a.end;
   switch (end?.reason) {
@@ -100,7 +103,7 @@ function closedHeadline(a: AppointmentView): { title: string; body: string } {
 /** 홈 '오늘 할 일' 카드 글 */
 export function todoText(a: AppointmentView, today?: string): { title: string; body: string } | null {
   if (a.actions.confirm) return { title: `${whenWord(a, today)} 약속, 갈 수 있는지 알려 주세요`, body: `${a.event.name} · ${formatSeoulShort(a.confirm.deadline)}까지` };
-  if (a.actions.reconfirm && a.reschedule) return { title: '행사 일정이 바뀌었어요', body: `${formatSeoulShort(a.reschedule.deadline)}까지 다시 확인해 주세요` };
+  if (a.actions.reconfirm && a.reschedule) return { title: a.reschedule.reason === 'MEMBERS_CHANGED' ? '함께하는 사람이 바뀌었어요' : '행사 일정이 바뀌었어요', body: `${formatSeoulShort(a.reschedule.deadline)}까지 다시 확인해 주세요` };
   if (a.actions.reportNoShow) return { title: '상대가 아직 도착하지 않았어요', body: `${a.event.name} · 상황을 확인해 주세요` };
   if (a.actions.arrive) return { title: "도착하면 '도착했어요'를 눌러 주세요", body: `${a.meetingSpot.name} · ${formatSeoulShort(a.startsAt)}` };
   return null;

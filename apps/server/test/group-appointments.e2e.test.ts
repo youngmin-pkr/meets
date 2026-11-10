@@ -246,7 +246,7 @@ describe('단체 채팅', () => {
     const { id, A, B } = await trio({ confirm: 'ALL', at: '2026-12-12T12:00:00' });
     await post(A[0], `/appointments/${id}/chat`, { body: '안녕하세요!' }).expect(201);
     const seen = (await http(app).get(`/appointments/${id}/chat`).set(auth(B[0].token)).expect(200)).body;
-    expect(seen.companions.map((c: { userId: string }) => c.userId)).toEqual([A[0].userId, A[1].userId]);
+    expect(seen.companions.map((c: { userId: string }) => c.userId).sort()).toEqual([A[0].userId, A[1].userId].sort());
     const text = seen.messages.find((m: { kind: string }) => m.kind === 'TEXT');
     expect(text).toMatchObject({ body: '안녕하세요!', mine: false, senderNickname: '테스트a1' });
     expect((await http(app).get(`/appointments/${id}/chat`).set(auth(A[1].token)).expect(200)).body.messages.some((m: { body: string }) => m.body === '안녕하세요!')).toBe(true);

@@ -99,3 +99,22 @@ describe('만남 중에 내가 끝낸 약속', () => {
     expect(appointmentHeadline(v, { today: '2026-12-13' })).toEqual({ title: '만남을 끝냈어요', body: '내 신뢰 단계에는 영향이 없어요.' });
   });
 });
+
+describe('여러 명이 만나는 약속의 표시', () => {
+  const c = (userId: string, nickname: string) => ({ userId, nickname, avatarInitial: nickname.slice(0, 1), avatarColor: '#000' });
+  const withMates = (o: Partial<AppointmentView> = {}) =>
+    view({ counterpart: c('b', '하늘'), companions: [{ ...c('b', '하늘'), sameSide: false, confirmed: false, arrivedAt: null }, { ...c('a2', '지우'), sameSide: true, confirmed: true, arrivedAt: null }, { ...c('a3', '민트'), sameSide: true, confirmed: true, arrivedAt: null }], ...o });
+
+  test('상대를 \'하늘님 외 2명\'으로 부른다', () => {
+    expect(appointmentHeadline(withMates(), { today: '2026-12-13' }).title).toBe('하늘님 외 2명과의 약속');
+    expect(appointmentHeadline(view(), { today: '2026-12-13' }).title).toBe('하늘님과의 약속'); // 1:1
+  });
+
+  test('인원이 바뀌어 다시 정하는 약속은 행사 일정 변경과 다르게 안내한다', () => {
+    const base = { deadline: '2026-12-12T06:00:00.000Z', mine: false, theirs: true, newSchedule: { date: '2026-12-13', startTime: '14:00', endTime: '17:00' } };
+    const members = withMates({ status: 'RESCHEDULING', reschedule: { ...base, reason: 'MEMBERS_CHANGED' } });
+    expect(appointmentHeadline(members).title).toBe('함께하는 사람이 바뀌었어요');
+    const event = withMates({ status: 'RESCHEDULING', reschedule: { ...base, reason: 'EVENT_CHANGED' } });
+    expect(appointmentHeadline(event).title).toBe('행사 일정이 바뀌었어요');
+  });
+});

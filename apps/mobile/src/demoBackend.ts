@@ -24,6 +24,9 @@ import {
   CHAT_STATUS_LINES,
   canRequestHelp,
   combineProfiles,
+  groupName,
+  type PartyProposalView,
+  type ProposalInput,
   isInputDone,
   JOINABLE_PARTY_STATUSES,
   LIVE_PARTY_STATUSES,
@@ -220,6 +223,12 @@ interface DemoProposal {
   createdAt: number;
   /** 데모 전용: 예시 사용자가 자동으로 수락하는 시각 */
   autoAcceptAt: number | null;
+  /** 일행이 보낸(보내려는) 제안이면 그 일행 */
+  partyId: string | null;
+  /** 일행 제안 초안: 만든 사람을 뺀 일행원별 동의. 예시 친구는 잠시 뒤 자동으로 동의합니다. */
+  consents: Record<string, boolean>;
+  /** 데모 전용: 예시 친구가 동의하는 시각 */
+  consentAt: number | null;
 }
 
 interface DemoParticipant {
@@ -242,6 +251,8 @@ interface DemoAppointment {
   meetingSpotName: string;
   meetingSpotId: string;
   users: [string, string];
+  /** 일행으로 함께하는 다른 사람들 (데모에서는 예시 친구. 보낸 쪽과 같은 쪽이고 항상 '갈 수 있어요'로 봅니다) */
+  mates: string[];
   status: AppointmentStatus;
   date: string;
   startTime: string;
@@ -436,6 +447,10 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   function settle() {
     const t = now().getTime();
     for (const p of proposals) {
+      if (p.status === 'DRAFT') {
+        settleDraft(p, t);
+        continue;
+      }
       if (p.status !== 'SENT') continue;
       if (p.expiresAt.getTime() <= t) p.status = 'EXPIRED';
       else if (p.autoAcceptAt !== null && p.autoAcceptAt <= t) {
@@ -487,17 +502,29 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     // 데모 전용: 일행을 만들면 잠시 뒤 예시 친구가 합류합니다.
     if (p.sampleJoinAt !== null && p.sampleJoinAt <= t && now() < p.inviteExpiresAt && JOINABLE_PARTY_STATUSES.includes(p.status) && activeMembers(p).length < partySize.maxSize) {
       p.sampleJoinAt = null;
-      const friend = SAMPLE_PEOPLE.map((x) => `demo-sample-${x.key}`).find(
+      const free = SAMPLE_PEOPLE.map((x) => `demo-sample-${x.key}`).filter(
         (id) =>
           partyReady(id, p.eventId) &&
           !parties.some((o) => o.eventId === p.eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === id)) &&
           !activeMembers(p).some((m) => isBlockedBetween(id, m.userId)),
       );
+      // 일행 후보가 남도록, 리더의 후보가 아닌 사람을 먼저 친구로 고릅니다. (후보가 한 명뿐인 행사에서 그 사람이 친구가 되면 후보가 없어져 버림)
+      const leaderCandidates = (() => {
+        try {
+          const { days, all, viewer } = matchContext(p.eventId, p.leaderId);
+          return new Set(matchCandidates(viewer, all, days, POLICY, { shortTime: true, immersionPlus: true }).candidates.map((c) => c.userId));
+        } catch {
+          return new Set<string>();
+        }
+      })();
+      const friend = free.find((id) => !leaderCandidates.has(id)) ?? free[0];
       if (friend) {
         p.members.push({ userId: friend, joinedAt: now(), active: true, remindedAt: null });
         for (const m of activeMembers(p)) notify(m.userId, 'PARTY_JOINED', { nickname: nicknameOf(friend), eventName: eventName(p.eventId) });
       }
     }
+    // 보낸 제안이 끝났으면(답을 받았거나 만료·취소) 일행은 활성으로 돌아갑니다.
+    if (p.status === 'PROPOSING' && !proposals.some((x) => x.partyId === p.id && x.status === 'SENT')) p.status = 'ACTIVE';
     for (let guard = 0; guard < 4; guard++) {
       const members = activeMembers(p);
       const eventOpen = (() => {
@@ -522,12 +549,83 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       }
       p.status = next.to;
       if (next.to === 'DISBANDED') {
+        endPartyProposals(p, members.length === 1 ? members[0].userId : null);
         for (const m of members) notify(m.userId, 'PARTY_DISBANDED', { eventName: eventName(p.eventId) });
         for (const m of members) m.active = false;
       } else if (next.to === 'ACTIVE') {
         for (const m of members) notify(m.userId, 'PARTY_READY', { eventName: eventName(p.eventId) });
       }
     }
+  }
+
+  /** 일행 제안 초안: 시간이 지나면 만료, 예시 친구는 잠시 뒤 동의, 전원이 동의하면 제안이 나감 */
+  function settleDraft(p: DemoProposal, t: number) {
+    if (p.expiresAt.getTime() <= t) {
+      p.status = 'EXPIRED';
+      return;
+    }
+    if (p.consentAt !== null && p.consentAt <= t) {
+      p.consentAt = null;
+      for (const id of Object.keys(p.consents)) if (isSample(id)) p.consents[id] = true;
+    }
+    if (Object.values(p.consents).every(Boolean)) sendDraft(p);
+  }
+
+  /** 전원이 동의한 초안을 제안으로 내보냅니다. (나가는 시점부터 다시 24시간) */
+  function sendDraft(p: DemoProposal) {
+    const { day } = dayAndSpot(p.eventId, p.eventDayId, p.meetingSpotId);
+    const expiresAt = proposalExpiresAt(now(), day, {
+      expireHours: POLICY_DEFAULTS.PROPOSAL_EXPIRE_HOURS,
+      eventCutoffHours: POLICY_DEFAULTS.PROPOSAL_EVENT_CUTOFF_HOURS,
+    });
+    if (!expiresAt) {
+      p.status = 'CANCELLED';
+      return;
+    }
+    p.status = 'SENT';
+    p.expiresAt = expiresAt;
+    p.autoAcceptAt = isSample(p.receiverId) ? now().getTime() + autoAcceptDelayMs : null;
+    const party = parties.find((x) => x.id === p.partyId);
+    if (party && party.status === 'ACTIVE') party.status = 'PROPOSING';
+    const ids = party ? activeMembers(party).map((m) => m.userId).sort((a, b) => Number(b === p.senderId) - Number(a === p.senderId)) : [p.senderId];
+    notify(p.receiverId, 'PROPOSAL_RECEIVED', { nickname: groupName(ids.map(nicknameOf)), eventName: eventName(p.eventId), deadline: formatSeoulShort(expiresAt) }, { proposalId: p.id });
+    for (const id of ids) notify(id, 'PARTY_PROPOSAL_SENT', { eventName: eventName(p.eventId), deadline: formatSeoulShort(expiresAt) }, { proposalId: p.id });
+  }
+
+  /** 일행이 풀렸을 때: 초안은 취소, 보낸 제안은 남은 한 명의 개인 제안으로 (없으면 취소) */
+  function endPartyProposals(party: DemoParty, remaining: string | null) {
+    for (const p of proposals.filter((x) => x.partyId === party.id && (x.status === 'DRAFT' || x.status === 'SENT'))) {
+      if (p.status === 'SENT' && remaining) {
+        p.senderId = remaining;
+        p.partyId = null;
+      } else p.status = 'CANCELLED';
+    }
+  }
+
+  /** 이 일행이 보낸(보내려는) 진행 중인 제안 */
+  const openProposalOf = (partyId: string) => proposals.find((x) => x.partyId === partyId && (x.status === 'DRAFT' || x.status === 'SENT'));
+
+  function partyProposalView(x: DemoProposal, me: string): PartyProposalView {
+    const { day } = dayAndSpot(x.eventId, x.eventDayId, x.meetingSpotId);
+    const r = counterpartOf(x.receiverId);
+    return {
+      id: x.id,
+      status: x.status as 'DRAFT' | 'SENT',
+      receiver: { userId: r.userId, nickname: r.nickname, avatarInitial: r.avatarInitial, avatarColor: r.avatarColor },
+      date: day.date,
+      segments: day.segments.filter((s) => x.segmentIds.includes(s.id)),
+      meetingSpotName: dayAndSpot(x.eventId, x.eventDayId, x.meetingSpotId).spot.name,
+      expiresAt: x.expiresAt.toISOString(),
+      agreements:
+        x.status === 'DRAFT'
+          ? [
+              { userId: x.senderId, nickname: nicknameOf(x.senderId), agreed: true, isMe: x.senderId === me },
+              ...Object.entries(x.consents).map(([userId, agreed]) => ({ userId, nickname: nicknameOf(userId), agreed, isMe: userId === me })),
+            ]
+          : [],
+      needsMyAgreement: x.status === 'DRAFT' && x.consents[me] === false,
+      canCancel: true,
+    };
   }
 
   function partyView(p: DemoParty, me: string): PartyView {
@@ -546,11 +644,13 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     const isLeader = p.leaderId === me;
     const joinable = JOINABLE_PARTY_STATUSES.includes(p.status) && now() < p.inviteExpiresAt && members.length < partySize.maxSize;
     const notReady = members.filter((m) => !m.ready);
+    const open = openProposalOf(p.id);
     return {
       id: p.id,
       event: { id: p.eventId, name: eventName(p.eventId) },
       status: p.status,
       statusLabel: PARTY_STATUS_LABELS[p.status],
+      proposal: open ? partyProposalView(open, me) : null,
       members,
       minSize: partySize.minSize,
       maxSize: partySize.maxSize,
@@ -561,6 +661,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         disband: isLeader,
         leave: true,
         candidates: p.status === 'ACTIVE',
+        propose: p.status === 'ACTIVE' && !open,
       },
     };
   }
@@ -587,6 +688,14 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     if (activeMembers(p).length >= partySize.maxSize) return `일행은 최대 ${partySize.maxSize}명이에요.`;
     if (parties.some((o) => o.eventId === p.eventId && o.status !== 'DISBANDED' && o.members.some((m) => m.active && m.userId === userId))) return '이 행사에는 이미 다른 일행이 있어요.';
     return null;
+  }
+
+  /** 일행 전원 기준으로 이 사람이 후보인지 (조건을 넓힌 후보까지) */
+  function partyCandidateFor(p: DemoParty, otherId: string) {
+    const c = partyContext(p);
+    return (
+      matchPartyCandidates(`party:${p.id}`, c.members, c.others, c.days, POLICY, { shortTime: true, immersionPlus: true }).candidates.find((x) => x.userId === otherId) ?? null
+    );
   }
 
   /** 일행 후보를 찾기 위한 정보 (일행 전원의 입력이 있어야 함) */
@@ -784,6 +893,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       meetingSpotId: spot.id,
       meetingSpotName: spot.name,
       users: [p.senderId, p.receiverId],
+      mates: p.partyId ? activeMembers(parties.find((x) => x.id === p.partyId)!).map((m) => m.userId).filter((u) => u !== p.senderId && u !== p.receiverId) : [],
       status: 'PENDING_CONFIRM',
       date: day.date,
       ...appointmentWindow(day, segments),
@@ -895,8 +1005,36 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       meetingSpot: { id: spot.id, name: spot.name },
       expiresAt: p.expiresAt.toISOString(),
       createdAt: new Date(p.createdAt).toISOString(),
+      party: proposalParty(p),
+      consent:
+        p.status === 'DRAFT' && p.partyId && (p.senderId === me || me in p.consents)
+          ? {
+              agreed: 1 + Object.values(p.consents).filter(Boolean).length,
+              total: 1 + Object.keys(p.consents).length,
+              members: [
+                { userId: p.senderId, nickname: nicknameOf(p.senderId), agreed: true, isMe: p.senderId === me },
+                ...Object.entries(p.consents).map(([userId, agreed]) => ({ userId, nickname: nicknameOf(userId), agreed, isMe: userId === me })),
+              ],
+              needsMyAgreement: p.consents[me] === false,
+            }
+          : null,
+      canCancel: (p.status === 'DRAFT' || p.status === 'SENT') && (p.senderId === me || isPartyMember(p, me)),
     };
   }
+
+  /** 일행이 보낸 제안이면 일행원들 (만든 사람이 먼저) */
+  function proposalParty(p: DemoProposal): ProposalView['party'] {
+    if (!p.partyId) return null;
+    const party = parties.find((x) => x.id === p.partyId);
+    if (!party) return null;
+    const ids = activeMembers(party).map((m) => m.userId).sort((a, b) => Number(b === p.senderId) - Number(a === p.senderId));
+    return { id: party.id, members: ids.map(counterpartOf) };
+  }
+
+  const isPartyMember = (p: DemoProposal, me: string) => {
+    const party = p.partyId ? parties.find((x) => x.id === p.partyId) : undefined;
+    return !!party && activeMembers(party).some((m) => m.userId === me);
+  };
 
   function appointmentView(a: DemoAppointment, me: string): AppointmentView {
     const f = factsOf(a);
@@ -913,7 +1051,11 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       id: a.id,
       status: a.status,
       counterpart: counterpartOf(other),
-      companions: [{ ...counterpartOf(other), sameSide: false, confirmed: !!theirs.confirmedAt, arrivedAt: theirs.arrivedAt?.toISOString() ?? null }],
+      companions: [
+        { ...counterpartOf(other), sameSide: false, confirmed: !!theirs.confirmedAt, arrivedAt: theirs.arrivedAt?.toISOString() ?? null },
+        // 일행으로 함께하는 예시 친구들 (보낸 쪽). 내가 받은 쪽이면 상대 쪽, 보낸 쪽이면 같은 쪽입니다.
+        ...a.mates.map((m) => ({ ...counterpartOf(m), sameSide: a.users[0] === me, confirmed: true, arrivedAt: null })),
+      ],
       event: { id: a.eventId, name: eventName(a.eventId) },
       day: { id: a.eventDayId, date: a.date, startTime: a.startTime },
       segments: a.segments,
@@ -1030,6 +1172,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       meetingSpotId: spot.id,
       meetingSpotName: spot.name,
       users: [partner, userId],
+      mates: [],
       status: 'ENDED',
       date,
       startTime: '15:00',
@@ -1085,6 +1228,9 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       expiresAt: now(),
       createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
       autoAcceptAt: null,
+      partyId: null,
+      consents: {},
+      consentAt: null,
     };
     proposals.push(p);
     const a = acceptInternal(p, { confirmOpensAt: now() });
@@ -1114,6 +1260,9 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       expiresAt: now(),
       createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
       autoAcceptAt: null,
+      partyId: null,
+      consents: {},
+      consentAt: null,
     };
     proposals.push(p);
     const a = acceptInternal(p);
@@ -1162,6 +1311,9 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       expiresAt,
       createdAt: now().getTime(),
       autoAcceptAt: isSample(receiverId) ? now().getTime() + autoAcceptDelayMs : null,
+      partyId: null,
+      consents: {},
+      consentAt: null,
     };
     proposals.push(p);
     notify(receiverId, 'PROPOSAL_RECEIVED', { nickname: nicknameOf(senderId), eventName: eventName(eventId), deadline: formatSeoulShort(expiresAt) }, { proposalId: p.id });
@@ -1274,8 +1426,8 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     };
   }
 
-  function matchContext(eventId: string) {
-    const user = currentUser();
+  function matchContext(eventId: string, forUserId?: string) {
+    const user = forUserId ? users.find((u) => u.id === forUserId)! : currentUser();
     const { days } = visibleEvent(eventId);
     const all = profilesFor(user.id, eventId);
     const viewer = all.find((p) => p.userId === user.id);
@@ -1671,7 +1823,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       settle();
       return delay(
         proposals
-          .filter((p) => p.senderId === user.id || p.receiverId === user.id)
+          .filter((p) => p.senderId === user.id || (p.receiverId === user.id && p.status !== 'DRAFT') || isPartyMember(p, user.id))
           .sort((a, b) => b.createdAt - a.createdAt)
           .map((p) => proposalView(p, user.id)),
       );
@@ -1680,11 +1832,12 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     async acceptProposal(id) {
       const user = currentUser();
       settle();
-      const p = proposals.find((x) => x.id === id && x.receiverId === user.id);
+      const p = proposals.find((x) => x.id === id && x.receiverId === user.id && x.status !== 'DRAFT');
       if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
       if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', p.status === 'EXPIRED' ? '답할 수 있는 시간이 지났어요.' : '이미 처리된 제안이에요.');
       if (!gradeOf(user.id, p.eventId)) throw new ApiError('PROPOSAL_NEEDS_TICKET', '같은 행사 티켓 인증을 마친 뒤 수락할 수 있어요.');
-      const still = candidateFor(p.senderId, p.eventId, user.id);
+      const party = p.partyId ? parties.find((x) => x.id === p.partyId) : undefined;
+      const still = party ? partyCandidateFor(party, user.id) : candidateFor(p.senderId, p.eventId, user.id);
       const ov = still?.overlaps.find((o) => o.eventDayId === p.eventDayId);
       if (!ov || !p.segmentIds.every((x) => ov.segmentIds.includes(x))) {
         throw new ApiError('PROPOSAL_INVALID', '그사이 일정이나 조건이 바뀌어 이 제안은 수락할 수 없어요.');
@@ -1700,20 +1853,21 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     async rejectProposal(id) {
       const user = currentUser();
       settle();
-      const p = proposals.find((x) => x.id === id && x.receiverId === user.id);
+      const p = proposals.find((x) => x.id === id && x.receiverId === user.id && x.status !== 'DRAFT');
       if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
       if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
       p.status = 'REJECTED';
-      notify(p.senderId, 'PROPOSAL_REJECTED', { nickname: nicknameOf(user.id), eventName: eventName(p.eventId) }, { proposalId: p.id });
+      const senders = p.partyId ? activeMembers(parties.find((x) => x.id === p.partyId)!).map((m) => m.userId) : [p.senderId];
+      for (const sid of senders) notify(sid, 'PROPOSAL_REJECTED', { nickname: nicknameOf(user.id), eventName: eventName(p.eventId) }, { proposalId: p.id });
       return delay({ id, status: 'REJECTED' });
     },
 
     async cancelProposal(id) {
       const user = currentUser();
       settle();
-      const p = proposals.find((x) => x.id === id && x.senderId === user.id);
+      const p = proposals.find((x) => x.id === id && (x.senderId === user.id || isPartyMember(x, user.id)));
       if (!p) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
-      if (p.status !== 'SENT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
+      if (p.status !== 'SENT' && p.status !== 'DRAFT') throw new ApiError('PROPOSAL_STATE', '이미 처리된 제안이에요.');
       p.status = 'CANCELLED';
       return delay({ id, status: 'CANCELLED' });
     },
@@ -1885,7 +2039,14 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       leaveParty(p, user.id);
       const rest = activeMembers(p);
       if (p.leaderId === user.id && rest.length > 0) p.leaderId = rest[0].userId;
-      if (rest.length >= partySize.minSize) for (const m of rest) notify(m.userId, 'PARTY_MEMBER_LEFT', { nickname: nick, eventName: eventName(p.eventId) });
+      if (rest.length >= partySize.minSize) {
+        for (const m of rest) notify(m.userId, 'PARTY_MEMBER_LEFT', { nickname: nick, eventName: eventName(p.eventId) });
+        // 초안에서는 빠진 사람의 동의가 필요 없어지고, 남은 사람이 모두 동의했으면 제안이 나갑니다.
+        for (const d of proposals.filter((x) => x.partyId === p.id && x.status === 'DRAFT')) {
+          delete d.consents[user.id];
+          if (Object.values(d.consents).every(Boolean)) sendDraft(d);
+        }
+      }
       settleParty(p, now().getTime());
       return delay({ left: true as const });
     },
@@ -1894,6 +2055,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       const { user, p } = myParty(id);
       if (p.leaderId !== user.id) throw new ApiError('FORBIDDEN', '대표만 일행을 풀 수 있어요.');
       for (const m of activeMembers(p).filter((x) => x.userId !== user.id)) notify(m.userId, 'PARTY_DISBANDED', { eventName: eventName(p.eventId) });
+      endPartyProposals(p, null);
       p.status = 'DISBANDED';
       for (const m of p.members) m.active = false;
       return delay({ disbanded: true as const });
@@ -1914,6 +2076,80 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       }
       settleParty(p, now().getTime());
       return delay(partyView(p, user.id));
+    },
+
+    async createPartyProposal(partyId, input: ProposalInput) {
+      const { user, p } = myParty(partyId);
+      const open = openProposalOf(p.id);
+      if (p.status === 'PROPOSING' || open) throw new ApiError('PROPOSAL_EXISTS', '이미 진행 중인 일행 제안이 있어요. 끝난 뒤에 새로 만들 수 있어요.');
+      if (p.status !== 'ACTIVE') throw new ApiError('PARTY_NOT_READY', '일행 전원이 입력을 마쳐야 제안할 수 있어요.');
+      const memberIds = activeMembers(p).map((m) => m.userId);
+      if (memberIds.includes(input.receiverId)) throw new ApiError('PROPOSAL_INVALID', '일행에게는 제안할 수 없어요.');
+      const found = partyCandidateFor(p, input.receiverId);
+      if (!found) throw new ApiError('NOT_FOUND', '후보를 찾을 수 없어요.');
+      const ov = found.overlaps.find((o) => o.eventDayId === input.eventDayId);
+      if (!ov) throw new ApiError('PROPOSAL_INVALID', '함께할 수 있는 날을 골라 주세요.', { field: 'eventDayId' });
+      const { event } = visibleEvent(p.eventId);
+      const day = event.days.find((d) => d.id === input.eventDayId)!;
+      const segs = [...new Set(input.segmentIds)];
+      if (day.segments.length > 0 ? segs.length === 0 || !segs.every((x) => ov.segmentIds.includes(x)) : segs.length > 0) {
+        throw new ApiError('PROPOSAL_INVALID', '모두 같이하기로 한 구간 중에서 골라 주세요.', { field: 'segmentIds' });
+      }
+      if (!event.meetingSpots.some((m) => m.id === input.meetingSpotId)) {
+        throw new ApiError('PROPOSAL_INVALID', '공개된 만날 장소를 골라 주세요.', { field: 'meetingSpotId' });
+      }
+      const w = appointmentWindow(day, day.segments.filter((x) => segs.includes(x.id)));
+      for (const id of memberIds) {
+        if (overlapFor(id, rangeOf(day.date, w.startTime, w.endTime))) throw new ApiError('APPOINTMENT_OVERLAP', '일행 중 그 시간에 이미 다른 약속이 있는 분이 있어요.');
+      }
+      const expiresAt = proposalExpiresAt(now(), day, { expireHours: POLICY_DEFAULTS.PROPOSAL_EXPIRE_HOURS, eventCutoffHours: POLICY_DEFAULTS.PROPOSAL_EVENT_CUTOFF_HOURS });
+      if (!expiresAt) throw new ApiError('PROPOSAL_TOO_LATE', `행사 ${POLICY_DEFAULTS.PROPOSAL_EVENT_CUTOFF_HOURS}시간 전부터는 제안할 수 없어요.`);
+      const others = memberIds.filter((id) => id !== user.id);
+      const draft: DemoProposal = {
+        id: `demo-proposal-${++proposalSeq}`,
+        senderId: user.id,
+        receiverId: input.receiverId,
+        eventId: p.eventId,
+        eventDayId: input.eventDayId,
+        segmentIds: segs,
+        meetingSpotId: input.meetingSpotId,
+        status: 'DRAFT',
+        expiresAt,
+        createdAt: now().getTime(),
+        autoAcceptAt: null,
+        partyId: p.id,
+        consents: Object.fromEntries(others.map((id) => [id, false])),
+        // 데모 전용: 예시 친구는 잠시 뒤 동의합니다.
+        consentAt: others.some(isSample) ? now().getTime() + autoAcceptDelayMs : null,
+      };
+      proposals.push(draft);
+      for (const id of others) notify(id, 'PARTY_PROPOSAL_ASK', { nickname: nicknameOf(user.id), eventName: eventName(p.eventId), deadline: formatSeoulShort(expiresAt) }, { proposalId: draft.id });
+      return delay(proposalView(draft, user.id));
+    },
+
+    async agreeProposal(id) {
+      const user = currentUser();
+      settle();
+      const d = proposals.find((x) => x.id === id && user.id in x.consents);
+      if (!d) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
+      if (d.status !== 'DRAFT') throw new ApiError('PROPOSAL_STATE', d.status === 'EXPIRED' ? '동의할 수 있는 시간이 지났어요.' : '이미 처리된 제안이에요.');
+      d.consents[user.id] = true;
+      if (Object.values(d.consents).every(Boolean)) sendDraft(d);
+      return delay(proposalView(d, user.id));
+    },
+
+    async declineProposal(id) {
+      const user = currentUser();
+      settle();
+      const d = proposals.find((x) => x.id === id && user.id in x.consents);
+      if (!d) throw new ApiError('NOT_FOUND', '제안을 찾을 수 없어요.');
+      if (d.status !== 'DRAFT') throw new ApiError('PROPOSAL_STATE', d.status === 'EXPIRED' ? '동의할 수 있는 시간이 지났어요.' : '이미 처리된 제안이에요.');
+      d.status = 'CANCELLED';
+      const party = parties.find((x) => x.id === d.partyId);
+      for (const m of party ? activeMembers(party).filter((x) => x.userId !== user.id) : []) {
+        notify(m.userId, 'PARTY_PROPOSAL_DECLINED', { nickname: nicknameOf(user.id), eventName: eventName(d.eventId) }, { proposalId: d.id });
+      }
+      return delay({ id, status: 'CANCELLED' as const });
     },
 
     async getPartyCandidates(id, options) {

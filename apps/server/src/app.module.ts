@@ -44,6 +44,7 @@ import { SafetyController, SharedLinkController } from './safety/safety.controll
 import { SafetyService } from './safety/safety.service';
 import { PartiesController } from './parties/parties.controller';
 import { PartiesService } from './parties/parties.service';
+import { PartyProposalsService } from './parties/party-proposals.service';
 import { PartyStateService } from './parties/party-state.service';
 import { SignupController } from './signup/signup.controller';
 import { SignupService } from './signup/signup.service';
@@ -93,6 +94,7 @@ export class AppModule {
         SafetyChecksService,
         SafetyService,
         PartyStateService,
+        PartyProposalsService,
         PartiesService,
       ],
     };

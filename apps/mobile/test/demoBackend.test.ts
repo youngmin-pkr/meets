@@ -924,4 +924,95 @@ describe('데모: 일행', () => {
     // 초대 시간이 지나면 예시 친구도 합류하지 못해 혼자 남은 일행은 풀린다
     await expect(backend.getParty(party.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
+
+  async function activeParty() {
+    const w = await world();
+    await w.finish();
+    const party = await w.backend.createParty(w.concert.id);
+    w.tick(1); // 예시 친구 합류 → 활성
+    const active = await w.backend.getParty(party.id);
+    expect(active.status).toBe('ACTIVE');
+    const cands = await w.backend.getPartyCandidates(party.id, {});
+    const target = cands.candidates[0];
+    const detail = await w.backend.getPartyCandidate(party.id, target.userId);
+    const ov = detail.overlaps[0];
+    const input = { receiverId: target.userId, eventDayId: ov.eventDayId, segmentIds: ov.segmentIds.slice(0, 1), meetingSpotId: w.concert.meetingSpots[0].id };
+    return { ...w, party: active, target, input };
+  }
+
+  test('일행으로 제안하면 초안이 되고, 예시 친구가 동의하면 제안이 나가 일행이 제안 중이 된다', async () => {
+    const { backend, tick, party, input } = await activeParty();
+    const draft = await backend.createPartyProposal(party.id, input);
+    expect(draft).toMatchObject({ status: 'DRAFT', direction: 'SENT', canCancel: true, consent: { agreed: 1, total: 2, needsMyAgreement: false } });
+    expect(draft.party?.members).toHaveLength(2);
+    const view = await backend.getParty(party.id);
+    expect(view.actions).toMatchObject({ propose: false });
+    expect(view.proposal).toMatchObject({ status: 'DRAFT' });
+    await expect(backend.createPartyProposal(party.id, input)).rejects.toMatchObject({ code: 'PROPOSAL_EXISTS' });
+    tick(1);
+    const sent = (await backend.listProposals()).find((p) => p.id === draft.id)!;
+    expect(sent.status).toBe('SENT');
+    expect((await backend.getParty(party.id)).status).toBe('PROPOSING');
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).toContain('PARTY_PROPOSAL_SENT');
+  });
+
+  test('받은 예시 사용자가 수락하면 일행과 함께하는 약속이 생기고 일행은 활성으로 돌아간다', async () => {
+    const { backend, tick, party, input, target } = await activeParty();
+    await backend.createPartyProposal(party.id, input);
+    tick(1);
+    await backend.listProposals(); // 예시 친구 동의 → 제안이 나감
+    tick(1);
+    const appts = await backend.listAppointments();
+    const group = appts.find((a) => a.companions.length === 2 && a.companions.some((c) => c.userId === target.userId))!;
+    expect(group).toBeTruthy();
+    expect(group.companions.map((c) => c.sameSide).sort()).toEqual([false, true]);
+    expect((await backend.getParty(party.id)).status).toBe('ACTIVE');
+  });
+
+  test('초안은 만든 사람이 취소할 수 있고, 취소하면 다시 만들 수 있다', async () => {
+    const { backend, party, input } = await activeParty();
+    const draft = await backend.createPartyProposal(party.id, input);
+    await backend.cancelProposal(draft.id);
+    expect((await backend.listProposals()).find((p) => p.id === draft.id)?.status).toBe('CANCELLED');
+    expect((await backend.getParty(party.id)).actions.propose).toBe(true);
+    await backend.createPartyProposal(party.id, input);
+  });
+
+  test('초안은 24시간 안에 전원이 동의하지 않으면 만료된다. 일행이 풀리면 초안은 취소된다', async () => {
+    const { backend, party, input } = await activeParty();
+    const draft = await backend.createPartyProposal(party.id, input);
+    await backend.leaveParty(party.id); // 한 명만 남아 일행이 풀림
+    expect((await backend.listProposals()).find((p) => p.id === draft.id)?.status).toBe('CANCELLED');
+  });
+
+  test('진짜 일행원은 직접 동의해야 하고, 동의하면 제안이 나간다', async () => {
+    const { backend, tick, signUp, tokenA, concert, finish } = await world();
+    await finish();
+    const party = await backend.createParty(concert.id);
+    const token = party.invite!.url.split('/party-invite/')[1];
+    const tokenB = await signUp('pa5', '데모동행');
+    await finish();
+    await backend.joinParty(token);
+    backend.setSessionToken(tokenA);
+    tick(1); // 둘 다 입력을 마쳤으므로 이미 시작한 일행이라 예시 친구는 합류하지 않음 (2명)
+    const cands = await backend.getPartyCandidates(party.id, {});
+    const detail = await backend.getPartyCandidate(party.id, cands.candidates[0].userId);
+    const ov = detail.overlaps[0];
+    const draft = await backend.createPartyProposal(party.id, { receiverId: detail.userId, eventDayId: ov.eventDayId, segmentIds: ov.segmentIds.slice(0, 1), meetingSpotId: concert.meetingSpots[0].id });
+    expect(draft.consent?.total).toBe(2);
+    tick(1); // 진짜 일행원이 동의하기 전에는 시간이 지나도 나가지 않음
+    expect((await backend.getParty(party.id)).proposal?.status).toBe('DRAFT');
+    backend.setSessionToken(tokenB);
+    const mine = (await backend.listProposals()).find((p) => p.id === draft.id)!;
+    expect(mine.consent?.needsMyAgreement).toBe(true);
+    expect(await backend.agreeProposal(draft.id)).toMatchObject({ status: 'SENT' });
+    await expect(backend.agreeProposal(draft.id)).rejects.toMatchObject({ code: 'PROPOSAL_STATE' });
+  });
+
+  test('받는 사람에게는 초안이 보이지 않는다', async () => {
+    const { backend, party, input } = await activeParty();
+    const draft = await backend.createPartyProposal(party.id, input);
+    expect(draft.status).toBe('DRAFT');
+    await expect(backend.agreeProposal(draft.id)).rejects.toMatchObject({ code: 'NOT_FOUND' }); // 만든 사람은 따로 동의하지 않음
+  });
 });

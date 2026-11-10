@@ -190,6 +190,8 @@ export interface PartyView {
   members: PartyMemberView[];
   minSize: number;
   maxSize: number;
+  /** 이 일행이 보낸(보내려는) 제안이 있으면 */
+  proposal: PartyProposalView | null;
   /** 초대 링크는 대표에게만, 합류할 수 있는 동안만 보임 */
   invite: { url: string; expiresAt: string } | null;
   /** 한 줄 안내 */
@@ -203,7 +205,24 @@ export interface PartyView {
     leave: boolean;
     /** 후보를 볼 수 있음 (활성) */
     candidates: boolean;
+    /** 일행 제안을 만들 수 있음 (활성이고 진행 중인 제안이 없음) */
+    propose: boolean;
   };
+}
+
+/** 일행이 만든 제안 (초안: 일행원의 동의를 모으는 중 / 보냄: 받는 사람의 답을 기다리는 중) */
+export interface PartyProposalView {
+  id: string;
+  status: 'DRAFT' | 'SENT';
+  receiver: { userId: string; nickname: string; avatarInitial: string; avatarColor: string };
+  date: string;
+  segments: Array<{ id: string; label: string; startTime: string; endTime: string }>;
+  meetingSpotName: string;
+  expiresAt: string;
+  /** 일행원별 동의 (제안을 만든 사람은 처음부터 동의) */
+  agreements: Array<{ userId: string; nickname: string; agreed: boolean; isMe: boolean }>;
+  needsMyAgreement: boolean;
+  canCancel: boolean;
 }
 
 /** 초대 링크를 열면 보이는 안내 (로그인한 사람에게만) */

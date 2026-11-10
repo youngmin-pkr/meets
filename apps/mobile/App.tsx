@@ -88,6 +88,8 @@ export default function App() {
   const [sentProposal, setSentProposal] = useState<ProposalView | null>(null);
   // 후기와 신고
   const [reviewAppt, setReviewAppt] = useState<AppointmentView | null>(null);
+  /** 여러 명이 만난 약속에서 아직 후기를 남기지 않은 다음 사람이 있는 약속 */
+  const [reviewNext, setReviewNext] = useState<AppointmentView | null>(null);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft>(initialReviewDraft());
   const [reviewResult, setReviewResult] = useState<{ mutual: boolean; reported: boolean }>({ mutual: false, reported: false });
   const [reportBack, setReportBack] = useState<Screen>('HOME');
@@ -167,7 +169,10 @@ export default function App() {
 
   /** 후기 시작 */
   function startReview(a: AppointmentView) {
-    setReviewAppt(a);
+    // 후기는 한 사람씩 따로 남깁니다. 후기 화면들은 '대상'을 counterpart로 보여 주므로, 남길 사람을 counterpart로 바꿔서 넘깁니다.
+    const target = a.review.targets[0] ?? a.counterpart;
+    setReviewNext(null);
+    setReviewAppt({ ...a, counterpart: target });
     setReviewDraft(initialReviewDraft());
     setReviewResult({ mutual: false, reported: false });
     setScreen('REVIEW_START');
@@ -448,7 +453,9 @@ export default function App() {
             }}
           />
         )}
-        {screen === 'PARTY_CANDIDATES' && partyForCandidates && <PartyCandidatesScreen party={partyForCandidates} onBack={() => setScreen('PARTY')} />}
+        {screen === 'PARTY_CANDIDATES' && partyForCandidates && (
+          <PartyCandidatesScreen party={partyForCandidates} onBack={() => setScreen('PARTY')} onProposed={() => setScreen('PARTY')} />
+        )}
         {screen === 'SAFETY_SETTINGS' && <SafetySettingsScreen onBack={() => setScreen('ME')} />}
         {screen === 'TRUST' && <TrustLevelScreen onBack={() => setScreen('ME')} onEvents={() => goTab('EVENTS')} />}
         {screen === 'BLOCKS' && <BlockListScreen onBack={() => setScreen('ME')} onReport={(a) => openReport(a, 'BLOCKS')} />}
@@ -475,12 +482,24 @@ export default function App() {
             onBack={() => setScreen('REVIEW_PICK')}
             onSent={(r) => {
               setReviewResult({ mutual: r.mutual, reported: false });
+              // 남길 사람이 더 있으면 이어서 안내합니다.
+              api.getAppointment(reviewAppt.id).then(
+                (fresh) => setReviewNext(fresh.review.targets.length > 0 ? fresh : null),
+                () => setReviewNext(null),
+              );
               setScreen('REVIEW_DONE');
             }}
           />
         )}
         {screen === 'REVIEW_DONE' && reviewAppt && (
-          <ReviewDoneScreen appointment={reviewAppt} result={reviewResult} onTrust={() => setScreen('TRUST')} onEvents={() => goTab('EVENTS')} />
+          <ReviewDoneScreen
+            appointment={reviewAppt}
+            result={reviewResult}
+            nextTarget={reviewNext?.review.targets[0]?.nickname ?? null}
+            onNext={() => reviewNext && startReview(reviewNext)}
+            onTrust={() => setScreen('TRUST')}
+            onEvents={() => goTab('EVENTS')}
+          />
         )}
         {screen === 'REPORT' && reviewAppt && (
           <ReportScreen
