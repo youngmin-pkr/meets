@@ -10,6 +10,7 @@ import {
   CANCEL_REASONS,
   dDayLabel,
   describeEventDateRange,
+  companionsLabel,
   describeRemaining,
   formatSeoulShort,
   POLICY_DEFAULTS,
@@ -134,6 +135,24 @@ export function HomeScreen(props: {
         <Text style={{ fontSize: 14, color: colors.muted }}>행사·장소 검색</Text>
       </Pressable>
 
+      {(proposals ?? [])
+        .filter((p) => p.status === 'DRAFT' && p.consent?.needsMyAgreement)
+        .map((p) => (
+          <Pressable
+            key={`consent-${p.id}`}
+            onPress={props.onProposals}
+            accessibilityRole="button"
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, borderRadius: 14, backgroundColor: colors.primary }}
+          >
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.white }}>오늘 할 일</Text>
+              <Text style={[{ fontSize: 15, fontWeight: '900', color: colors.white }, keepWords]}>일행 제안에 동의해 주세요</Text>
+              <Text style={[{ fontSize: 12, color: colors.white }, keepWords]}>{`${p.event.name} · ${p.counterpart.nickname}님에게`}</Text>
+            </View>
+            <Arrow color={colors.white} />
+          </Pressable>
+        ))}
+
       {todos.map(({ a, text }) => (
         <Pressable
           key={`todo-${a.id}`}
@@ -163,7 +182,7 @@ export function HomeScreen(props: {
           </View>
           <Text style={[{ fontSize: 16, fontWeight: '900', color: colors.ink }, keepWords]}>{a.event.name}</Text>
           <Text style={[{ fontSize: 13, color: colors.body }, keepWords]}>
-            {`${dateText(a.day.date)} ${a.day.startTime} · ${a.segments.map((s) => s.label).join(', ') || '행사 시간'} · ${a.counterpart.nickname}님`}
+            {`${dateText(a.day.date)} ${a.day.startTime} · ${a.segments.map((s) => s.label).join(', ') || '행사 시간'} · ${companionsLabel(a)}`}
           </Text>
           {a.unreadMessages ? (
             <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{`안 읽은 메시지 ${a.unreadMessages}개`}</Text>
@@ -342,7 +361,7 @@ export function AppointmentScreen(props: {
 
   const today = todayIso();
   const head = appointmentHeadline(a, { justAccepted: props.justAccepted, today });
-  const nick = `${a.counterpart.nickname}님`;
+  const nick = companionsLabel(a);
   const cancelLink = a.actions.cancel ? <TextButton label="약속을 취소할래요" onPress={() => props.onCancel(a)} /> : null;
 
   let footer: ReactNode;
@@ -456,10 +475,18 @@ export function AppointmentScreen(props: {
         <View style={{ gap: 8 }}>
           <Text style={{ fontSize: 13, fontWeight: '700' }}>지금 상태</Text>
           <StatusRow label="내 확인" done={a.confirm.mine} doneText="갈 수 있어요" waitText="기다리는 중" />
-          <StatusRow c={a.counterpart} label={nick} done={a.confirm.theirs} doneText="갈 수 있어요" waitText="아직이에요" />
+          {a.companions.length > 1 ? (
+            a.companions.map((c) => <StatusRow key={c.userId} c={c} label={`${c.nickname}님`} done={c.confirmed} doneText="갈 수 있어요" waitText="아직이에요" />)
+          ) : (
+            <StatusRow c={a.counterpart} label={nick} done={a.confirm.theirs} doneText="갈 수 있어요" waitText="아직이에요" />
+          )}
           <Card>
             <Text style={{ fontSize: 14, fontWeight: '900' }}>{`확인 마감 ${formatSeoulShort(a.confirm.deadline)}`}</Text>
-            <Body>마감까지 둘 다 확인하지 않으면 약속이 자동으로 취소돼요. 확인한 사람의 신뢰 단계에는 영향이 없어요.</Body>
+            <Body>
+              {a.companions.length > 1
+                ? '마감까지 확인하지 않은 사람은 약속에서 빠지고, 확인한 사람들끼리 계속해요. 한 쪽에 확인한 사람이 없으면 약속이 취소돼요.'
+                : '마감까지 둘 다 확인하지 않으면 약속이 자동으로 취소돼요. 확인한 사람의 신뢰 단계에는 영향이 없어요.'}
+            </Body>
             <Text style={styles.small}>{`아직 확인하지 않았으면 마감 ${POLICY_DEFAULTS.APPOINTMENT_CONFIRM_REMINDER_HOURS}시간 전에 한 번만 다시 알려 드려요.`}</Text>
           </Card>
         </View>
@@ -469,7 +496,13 @@ export function AppointmentScreen(props: {
         <View style={{ gap: 8 }}>
           <Text style={{ fontSize: 13, fontWeight: '700' }}>도착 기록</Text>
           <StatusRow label="내 도착" done={!!a.arrival.mine} doneText={a.arrival.mine ? `${timeOf(a.arrival.mine)} 도착` : ''} waitText="아직이에요" />
-          <StatusRow c={a.counterpart} label={nick} done={!!a.arrival.theirs} doneText={a.arrival.theirs ? `${timeOf(a.arrival.theirs)} 도착` : ''} waitText="도착 기록 없음" />
+          {a.companions.length > 1 ? (
+            a.companions.map((c) => (
+              <StatusRow key={c.userId} c={c} label={`${c.nickname}님`} done={!!c.arrivedAt} doneText={c.arrivedAt ? `${timeOf(c.arrivedAt)} 도착` : ''} waitText="도착 기록 없음" />
+            ))
+          ) : (
+            <StatusRow c={a.counterpart} label={nick} done={!!a.arrival.theirs} doneText={a.arrival.theirs ? `${timeOf(a.arrival.theirs)} 도착` : ''} waitText="도착 기록 없음" />
+          )}
           {mode === 'CONFIRMED' && !a.actions.arrive ? (
             <Text style={[styles.small, keepWords]}>{`약속 ${POLICY_DEFAULTS.APPOINTMENT_ARRIVAL_OPEN_MINUTES}분 전부터 '도착했어요'를 누를 수 있어요.`}</Text>
           ) : null}
@@ -536,7 +569,7 @@ export function CancelAppointmentScreen(props: { appointment: AppointmentView; o
     >
       <TopBar label="약속 취소" onBack={props.onBack} />
       <Title>{'무슨 일이\n생겼어요?'}</Title>
-      <Body>{`사유는 ${a.counterpart.nickname}님께 간단히 전달돼요. 고르지 않아도 돼요.`}</Body>
+      <Body>{`사유는 ${companionsLabel(a)}께 간단히 전달돼요. 고르지 않아도 돼요.`}</Body>
       <View style={{ gap: 8 }}>
         <Text style={{ fontSize: 13, fontWeight: '700' }}>사유 (선택)</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>

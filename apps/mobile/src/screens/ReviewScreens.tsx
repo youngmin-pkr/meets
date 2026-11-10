@@ -205,7 +205,8 @@ export function ReviewAgainScreen(props: {
     setError(null);
     setBusy(true);
     try {
-      const r = await api.submitReview(props.appointment.id, input);
+      // 후기는 한 사람씩 따로 남깁니다. (이 화면의 appointment.counterpart가 후기 대상)
+      const r = await api.submitReview(props.appointment.id, { ...input, targetId: props.appointment.counterpart.userId });
       props.onSent({ mutual: r.mutual });
     } catch (e) {
       setError(e instanceof Error ? e.message : '다시 시도해 주세요.');
@@ -250,13 +251,18 @@ export function ReviewDoneScreen(props: {
   result: { mutual: boolean; reported: boolean };
   onTrust: () => void;
   onEvents: () => void;
+  /** 여러 명이 만난 약속에서 아직 후기를 남기지 않은 다음 사람 */
+  nextTarget?: string | null;
+  onNext?: () => void;
 }) {
   const { result } = props;
   const nick = `${props.appointment.counterpart.nickname}님`;
+  const group = props.appointment.companions.length > 1;
   return (
     <Page
       footer={
         <>
+          {props.nextTarget && props.onNext ? <PrimaryButton dark label={`${props.nextTarget}님 후기도 남기기`} onPress={props.onNext} /> : null}
           <PrimaryButton label="내 신뢰 단계 보기" onPress={props.onTrust} />
           <TextButton label="행사 더 보기" onPress={props.onEvents} />
         </>
@@ -274,7 +280,7 @@ export function ReviewDoneScreen(props: {
       {result.mutual ? (
         <View style={{ gap: 6, padding: 16, borderRadius: 16, backgroundColor: colors.lime, borderWidth: 2, borderColor: colors.ink }}>
           <Text style={{ fontSize: 16, fontWeight: '900', color: colors.ink }}>서로 또 같이 가고 싶어 해요</Text>
-          <Text style={[{ fontSize: 13, lineHeight: 19, color: colors.ink }, keepWords]}>{`${nick}도 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드리고, 채팅도 계속 열려 있어요.`}</Text>
+          <Text style={[{ fontSize: 13, lineHeight: 19, color: colors.ink }, keepWords]}>{`${nick}도 '또 같이 가고 싶어요'를 골랐어요. 다음에 같은 행사에 가면 먼저 보여 드려요.${group ? '' : ' 채팅도 계속 열려 있어요.'}`}</Text>
         </View>
       ) : !result.reported ? (
         <View style={{ padding: 16, borderRadius: 16, backgroundColor: colors.white, borderWidth: 1.5, borderColor: colors.border }}>
@@ -298,16 +304,20 @@ export function ReportScreen(props: {
   const [alsoBlock, setAlsoBlock] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const nick = `${props.appointment.counterpart.nickname}님`;
+  /** 여러 명이 만난 약속에서 신고할 사람 (후기에서 넘어왔으면 후기 대상이 정해져 있음) */
+  const group = !props.fromReview && props.appointment.companions.length > 1;
+  const [targetId, setTargetId] = useState<string | null>(null);
+  const target = group ? props.appointment.companions.find((c) => c.userId === targetId) : props.appointment.counterpart;
+  const nick = `${target?.nickname ?? ''}님`;
 
   async function submit() {
-    if (!category) return;
+    if (!category || !target) return;
     setError(null);
     setBusy(true);
     try {
-      const r = await api.sendReport({ appointmentId: props.appointment.id, category, detail: detail.trim() || undefined, alsoBlock });
+      const r = await api.sendReport({ appointmentId: props.appointment.id, category, detail: detail.trim() || undefined, alsoBlock, ...(group || props.fromReview ? { targetId: target.userId } : {}) });
       // 후기에서 왔으면 '불편했어요' 후기도 함께 남깁니다. (이미 남겼거나 기간이 지났으면 신고만 접수)
-      if (props.fromReview) await api.submitReview(props.appointment.id, uncomfortableReview()).catch(() => undefined);
+      if (props.fromReview) await api.submitReview(props.appointment.id, { ...uncomfortableReview(), targetId: target.userId }).catch(() => undefined);
       props.onSent({ blocked: r.blocked });
     } catch (e) {
       setError(e instanceof Error ? e.message : '다시 시도해 주세요.');
@@ -317,8 +327,25 @@ export function ReportScreen(props: {
   }
 
   return (
-    <Page footer={<PrimaryButton label="신고 접수하기" onPress={submit} disabled={!category} loading={busy} />}>
+    <Page footer={<PrimaryButton label="신고 접수하기" onPress={submit} disabled={!category || !target} loading={busy} />}>
       <TopBar label="신고" onBack={props.onBack} />
+      {group ? (
+        <View style={{ gap: 8 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.ink }}>누구에 대한 신고인가요?</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {props.appointment.companions.map((c) => (
+              <Pressable
+                key={c.userId}
+                onPress={() => setTargetId(c.userId)}
+                accessibilityRole="button"
+                style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 18, borderWidth: 1.5, borderColor: c.userId === targetId ? colors.ink : colors.border, backgroundColor: c.userId === targetId ? colors.lime : colors.white }}
+              >
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.ink }}>{`${c.nickname}님`}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      ) : null}
       <View style={{ gap: 8 }}>
         <Title>{'어떤 일이 있었는지\n알려 주세요'}</Title>
         <Body>신고하신 분의 정보는 상대에게 공개되지 않아요.</Body>

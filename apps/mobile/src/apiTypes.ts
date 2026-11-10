@@ -119,6 +119,10 @@ export interface Backend {
   disbandParty(id: string): Promise<{ disbanded: true }>;
   /** 대표: 입력하지 않은 친구를 빼고 진행 */
   proceedParty(id: string): Promise<PartyView>;
+  /** 일행 제안 초안 만들기 (나머지 일행원이 모두 동의해야 제안이 나감) */
+  createPartyProposal(partyId: string, input: ProposalInput): Promise<ProposalView>;
+  agreeProposal(id: string): Promise<ProposalView>;
+  declineProposal(id: string): Promise<{ id: string; status: string }>;
   getPartyCandidates(id: string, options: MatchOptions): Promise<CandidatesResponse>;
   getPartyCandidate(id: string, userId: string): Promise<CandidateDetail>;
   previewPartyInvite(token: string): Promise<PartyInvitePreview>;
@@ -136,7 +140,8 @@ export interface Backend {
   /** 차단 (상대에게 알리지 않음). 진행 중인 약속은 끝납니다 */
   blockUser(userId: string): Promise<{ blocked: true }>;
   /** 채팅 규칙 화면: 약속 상대를 차단하고 약속을 끝냄 */
-  blockCounterpart(appointmentId: string): Promise<{ blocked: true }>;
+  /** 여러 명이 만나는 약속이면 누구를 차단하는지(targetId)도 알려야 합니다 */
+  blockCounterpart(appointmentId: string, targetId?: string): Promise<{ blocked: true }>;
   unblockUser(userId: string): Promise<{ blocked: false }>;
   listBlocks(): Promise<BlockView[]>;
   sendReport(input: ReportInput): Promise<{ id: string; received: true; blocked: boolean }>;

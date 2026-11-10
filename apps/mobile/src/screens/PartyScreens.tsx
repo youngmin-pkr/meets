@@ -6,7 +6,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Share, Text, TextInput, View } from 'react-native';
 import {
   PARTY_STATUS_LABELS,
+  describeRemaining,
   type CandidateCard,
+  type CandidateDetail,
+  type EventDetail,
   type CandidatesResponse,
   type PartyInvitePreview,
   type PartyView,
@@ -15,6 +18,7 @@ import { api } from '../api';
 import { colors } from '../theme';
 import { Body, Card, ErrorText, keepWords, Page, PrimaryButton, styles, TextButton, Title, TopBar } from '../ui';
 import { CandidateCardView } from './CandidateScreens';
+import { ProposalComposer } from './ProposalScreens';
 
 function Dot({ initial, color }: { initial: string; color: string }) {
   return (
@@ -47,6 +51,48 @@ function Note({ children }: { children: string }) {
   return (
     <View style={{ padding: 12, borderRadius: 12, backgroundColor: colors.white, borderWidth: 1.5, borderStyle: 'dashed', borderColor: colors.muted }}>
       <Text style={[{ fontSize: 12, lineHeight: 18, color: colors.body }, keepWords]}>{children}</Text>
+    </View>
+  );
+}
+
+/** 일행이 만든 제안: 동의를 모으는 중이거나, 받는 사람의 답을 기다리는 중 */
+function PartyProposalCard(props: { party: PartyView; busy: boolean; onAct: (fn: () => Promise<unknown>) => void }) {
+  const pr = props.party.proposal!;
+  const draft = pr.status === 'DRAFT';
+  return (
+    <View style={{ gap: 10, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
+      <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>
+        {draft ? '일행 제안 · 동의를 모으는 중' : `일행 제안 · ${pr.receiver.nickname}님의 답을 기다리는 중`}
+      </Text>
+      <View style={[styles.row, { gap: 10 }]}>
+        <Dot initial={pr.receiver.avatarInitial} color={pr.receiver.avatarColor} />
+        <View style={{ flex: 1 }}>
+          <Text style={[{ fontSize: 15, fontWeight: '900', color: colors.ink }, keepWords]}>{`${pr.receiver.nickname}님에게`}</Text>
+          <Text style={[styles.small, keepWords]}>{`${pr.date.slice(5).replace('-', '.')} · ${pr.segments.map((s) => `${s.label} ${s.startTime}–${s.endTime}`).join(', ') || '행사 시간 중'} · ${pr.meetingSpotName}`}</Text>
+        </View>
+      </View>
+      {draft ? (
+        <View style={{ gap: 6 }}>
+          {pr.agreements.map((a) => (
+            <View key={a.userId} style={[styles.row, { justifyContent: 'space-between' }]}>
+              <Text style={{ fontSize: 14, color: colors.ink }}>{`${a.nickname}${a.isMe ? ' (나)' : ''}`}</Text>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.ink }}>{a.agreed ? '동의함' : '기다리는 중'}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      <Text style={styles.small}>{`${describeRemaining(pr.expiresAt, new Date())} 안에 ${draft ? '모두 동의하지 않으면 사라져요' : '답이 없으면 만료돼요'}.`}</Text>
+      {pr.needsMyAgreement ? (
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <PrimaryButton label="동의하기" loading={props.busy} onPress={() => props.onAct(() => api.agreeProposal(pr.id))} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <PrimaryButton dark label="동의하지 않아요" disabled={props.busy} onPress={() => props.onAct(() => api.declineProposal(pr.id))} />
+          </View>
+        </View>
+      ) : null}
+      {pr.canCancel ? <TextButton label={draft ? '초안 취소하기' : '제안 취소하기'} onPress={() => props.onAct(() => api.cancelProposal(pr.id))} /> : null}
     </View>
   );
 }
@@ -120,8 +166,10 @@ export function PartyScreen(props: {
 
   const me = party.members.find((m) => m.isMe)!;
   let footer = null;
-  if (party.actions.candidates) {
+  if (party.actions.candidates && party.actions.propose) {
     footer = <PrimaryButton label="일행 후보 보기" onPress={() => props.onCandidates(party)} />;
+  } else if (party.status === 'PROPOSING' || party.proposal) {
+    footer = null; // 제안이 진행 중이면 아래 카드에서 처리해요
   } else if (!me.ready) {
     footer = <PrimaryButton label="내 일정·티켓 입력하러 가기" onPress={() => props.onInput(party.event.id)} />;
   } else if (party.actions.proceedWithout) {
@@ -152,6 +200,8 @@ export function PartyScreen(props: {
           </View>
         ))}
       </View>
+
+      {party.proposal ? <PartyProposalCard party={party} busy={busy} onAct={run} /> : null}
 
       {party.invite ? (
         <Card>
@@ -187,29 +237,50 @@ export function PartyScreen(props: {
           {party.actions.disband ? <TextButton label="일행 풀기" onPress={() => setConfirm('DISBAND')} /> : null}
         </>
       )}
-      <Note>일행 후보는 전원이 겹치는 시간, 가장 여유 있는 템포, 가장 낮은 몰입도를 기준으로 찾아요. 일행으로 제안을 보내는 기능은 다음 단계에서 열려요.</Note>
+      <Note>일행 후보는 전원이 겹치는 시간, 가장 여유 있는 템포, 가장 낮은 몰입도를 기준으로 찾아요. 일행으로 제안하려면 나머지 일행원이 모두 동의해야 해요.</Note>
       <ErrorText message={error} />
     </Page>
   );
 }
 
-/** 일행 후보 (일행 전원이 입력을 마친 뒤) */
-export function PartyCandidatesScreen(props: { party: PartyView; onBack: () => void }) {
+/** 일행 후보 (일행 전원이 입력을 마친 뒤). 후보를 고르면 날짜·구간·장소를 정해 일행에게 동의를 요청합니다. */
+export function PartyCandidatesScreen(props: { party: PartyView; onBack: () => void; onProposed: () => void }) {
   const [data, setData] = useState<CandidatesResponse | null>(null);
+  const [event, setEvent] = useState<EventDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [open, setOpen] = useState<string | null>(null);
-  const [reasons, setReasons] = useState<string | null>(null);
+  const [detail, setDetail] = useState<CandidateDetail | null>(null);
+  const me = props.party.members.find((m) => m.isMe);
 
   useEffect(() => {
     api.getPartyCandidates(props.party.id, { sort: 'RECOMMENDED' }).then(setData, (e: Error) => setError(e.message));
-  }, [props.party.id]);
+    api.getEvent(props.party.event.id).then(setEvent, (e: Error) => setError(e.message));
+  }, [props.party.id, props.party.event.id]);
 
   function show(c: CandidateCard) {
-    setOpen(c.userId);
-    setReasons(null);
-    api.getPartyCandidate(props.party.id, c.userId).then(
-      (d) => setReasons([d.reasons.tempo, d.reasons.immersion, d.reasons.time].filter(Boolean).join('\n')),
-      (e: Error) => setError(e.message),
+    setError(null);
+    api.getPartyCandidate(props.party.id, c.userId).then(setDetail, (e: Error) => setError(e.message));
+  }
+
+  if (detail && event) {
+    return (
+      <Page>
+        <TopBar label="일행으로 제안" onBack={() => setDetail(null)} />
+        <Title>{`${detail.nickname}님에게 제안`}</Title>
+        <Card>
+          <Text style={{ fontSize: 14, fontWeight: '700' }}>왜 잘 맞나요?</Text>
+          <Body>{detail.reasons.tempo}</Body>
+          <Body>{detail.reasons.immersion}</Body>
+          <Body>{`겹치는 시간 · ${detail.reasons.time}`}</Body>
+        </Card>
+        <ProposalComposer
+          event={event}
+          candidate={detail}
+          myGrade="VERIFIED"
+          party={{ id: props.party.id, others: props.party.members.filter((m) => !m.isMe).map((m) => m.nickname) }}
+          onSent={() => props.onProposed()}
+        />
+        <ErrorText message={error} />
+      </Page>
     );
   }
 
@@ -220,18 +291,11 @@ export function PartyCandidatesScreen(props: { party: PartyView; onBack: () => v
       <Body>{`${props.party.members.map((m) => m.nickname).join(', ')}님이 모두 겹치는 시간으로 찾았어요.`}</Body>
       <View style={{ gap: 12 }}>
         {data?.candidates.map((c, i) => (
-          <View key={c.userId} style={{ gap: 6 }}>
-            <CandidateCardView c={c} multiDay={false} highlight={i === 0} onPress={() => show(c)} />
-            {open === c.userId && reasons ? (
-              <Pressable onPress={() => setOpen(null)} style={{ padding: 12, borderRadius: 12, backgroundColor: colors.lime }}>
-                <Text style={[{ fontSize: 13, lineHeight: 20, color: colors.ink }, keepWords]}>{reasons}</Text>
-              </Pressable>
-            ) : null}
-          </View>
+          <CandidateCardView key={c.userId} c={c} multiDay={false} highlight={i === 0} onPress={() => show(c)} />
         ))}
       </View>
       {data && data.total === 0 ? <Body>전원이 겹치는 시간에 맞는 후보가 아직 없어요. 일행 인원을 줄이거나 시간을 조정하면 늘어날 수 있어요.</Body> : null}
-      <Note>일행으로 제안을 보내는 기능은 다음 단계에서 열려요.</Note>
+      {me ? <Note>후보를 고르면 일행에게 동의를 요청해요. 모두 동의하면 제안이 나가요.</Note> : null}
       <ErrorText message={error} />
     </Page>
   );

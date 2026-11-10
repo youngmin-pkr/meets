@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 import {
   describeEventDate,
+  groupName,
   describeRemaining,
   POLICY_DEFAULTS,
   PROPOSAL_STATUS_LABELS,
@@ -80,9 +81,15 @@ export function ProposalsScreen(props: { onBack: () => void; onAccepted: (a: App
           <View style={[styles.row, { gap: 10 }]}>
             <Avatar c={p.counterpart} />
             <View style={{ flex: 1, gap: 2 }}>
-              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.ink }}>{p.counterpart.nickname}</Text>
-              <Text style={{ fontSize: 12, color: p.status === 'SENT' ? colors.primary : colors.muted, fontWeight: '700' }}>
-                {p.status === 'SENT' ? `${PROPOSAL_STATUS_LABELS.SENT} · ${describeRemaining(p.expiresAt, new Date())}` : PROPOSAL_STATUS_LABELS[p.status]}
+              <Text style={[{ fontSize: 15, fontWeight: '700', color: colors.ink }, keepWords]}>
+                {p.direction === 'RECEIVED' && p.party ? groupName(p.party.members.map((m) => m.nickname)) : p.counterpart.nickname}
+              </Text>
+              <Text style={{ fontSize: 12, color: p.status === 'SENT' || p.status === 'DRAFT' ? colors.primary : colors.muted, fontWeight: '700' }}>
+                {p.status === 'SENT'
+                  ? `${PROPOSAL_STATUS_LABELS.SENT} · ${describeRemaining(p.expiresAt, new Date())}`
+                  : p.status === 'DRAFT' && p.consent
+                    ? `${PROPOSAL_STATUS_LABELS.DRAFT} · ${p.consent.agreed}/${p.consent.total}명 동의`
+                    : PROPOSAL_STATUS_LABELS[p.status]}
               </Text>
             </View>
           </View>
@@ -108,8 +115,21 @@ export function ProposalsScreen(props: { onBack: () => void; onAccepted: (a: App
               </View>
             </View>
           ) : null}
-          {p.status === 'SENT' && p.direction === 'SENT' ? (
-            <TextButton label="제안 취소하기" onPress={() => act(p.id, () => api.cancelProposal(p.id))} />
+          {p.party && p.direction === 'SENT' ? (
+            <Text style={[styles.small, keepWords]}>{`일행 · ${p.party.members.map((m) => m.nickname).join(', ')}`}</Text>
+          ) : null}
+          {p.status === 'DRAFT' && p.consent?.needsMyAgreement ? (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton label="동의하기" loading={busy === p.id} onPress={() => act(p.id, () => api.agreeProposal(p.id))} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton dark label="동의하지 않아요" disabled={busy === p.id} onPress={() => act(p.id, () => api.declineProposal(p.id))} />
+              </View>
+            </View>
+          ) : null}
+          {p.canCancel && (p.status === 'SENT' || p.status === 'DRAFT') ? (
+            <TextButton label={p.status === 'DRAFT' ? '초안 취소하기' : '제안 취소하기'} onPress={() => act(p.id, () => api.cancelProposal(p.id))} />
           ) : null}
         </View>
       ))}
@@ -125,6 +145,8 @@ export function ProposalComposer(props: {
   candidate: CandidateCard;
   myGrade: AttendanceGrade;
   onSent: (p: ProposalView) => void;
+  /** 일행으로 제안하는 경우: 나머지 일행원의 동의를 먼저 받습니다 */
+  party?: { id: string; others: string[] };
 }) {
   const { event, candidate } = props;
   const days = candidate.overlaps;
@@ -157,7 +179,8 @@ export function ProposalComposer(props: {
     setError(null);
     setBusy(true);
     try {
-      props.onSent(await api.sendProposal(event.id, { receiverId: candidate.userId, eventDayId: dayId, segmentIds: chosen, meetingSpotId: spotId }));
+      const input = { receiverId: candidate.userId, eventDayId: dayId, segmentIds: chosen, meetingSpotId: spotId };
+      props.onSent(props.party ? await api.createPartyProposal(props.party.id, input) : await api.sendProposal(event.id, input));
     } catch (e) {
       setError(e instanceof Error ? e.message : '다시 시도해 주세요.');
     } finally {
@@ -195,8 +218,12 @@ export function ProposalComposer(props: {
           <ChoiceRow key={m.id} label={m.name} selected={m.id === spotId} onPress={() => setSpotId(m.id)} />
         ))}
       </View>
-      <PrimaryButton label="이 구간으로 제안 보내기" onPress={send} disabled={!ready} loading={busy} />
-      <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>제안은 상대가 수락하기 전까지 연락처가 공개되지 않아요.</Text>
+      <PrimaryButton label={props.party ? '일행에게 동의 요청하기' : '이 구간으로 제안 보내기'} onPress={send} disabled={!ready} loading={busy} />
+      <Text style={[{ textAlign: 'center', fontSize: 12, color: colors.muted }, keepWords]}>
+        {props.party
+          ? `${props.party.others.join(', ')}님이 모두 동의하면 제안이 나가요. 연락처는 상대가 수락하기 전까지 공개되지 않아요.`
+          : '제안은 상대가 수락하기 전까지 연락처가 공개되지 않아요.'}
+      </Text>
       <ErrorText message={error} />
     </View>
   );
@@ -215,8 +242,8 @@ export function ProposalSentScreen(props: { proposal: ProposalView; onDone: () =
       }
     >
       <TopBar label="제안" />
-      <Title>제안을 보냈어요</Title>
-      <Body>{`${p.counterpart.nickname}님이 수락하면 약속이 만들어져요. ${describeRemaining(p.expiresAt, new Date())} 안에 답이 없으면 자동으로 만료돼요.`}</Body>
+      <Title>{p.status === 'DRAFT' ? '일행에게 동의를 요청했어요' : '제안을 보냈어요'}</Title>
+      <Body>{p.status === 'DRAFT' ? `일행이 모두 동의하면 ${p.counterpart.nickname}님에게 제안이 나가요. 동의가 모이지 않으면 ${describeRemaining(p.expiresAt, new Date())} 뒤 자동으로 사라져요.` : `${p.counterpart.nickname}님이 수락하면 약속이 만들어져요. ${describeRemaining(p.expiresAt, new Date())} 안에 답이 없으면 자동으로 만료돼요.`}</Body>
       <View style={{ gap: 10, padding: 16, borderRadius: 16, borderWidth: 2, borderColor: colors.ink, backgroundColor: colors.white }}>
         <Row label="행사" text={p.event.name} />
         <Row label="날짜" text={dateText(p.day.date)} />

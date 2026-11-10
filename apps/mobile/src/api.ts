@@ -149,6 +149,9 @@ function createHttpBackend(baseUrl: string): Backend {
       return call<CandidatesResponse>('GET', `/parties/${encodeURIComponent(id)}/candidates${qs ? `?${qs}` : ''}`);
     },
     getPartyCandidate: (id, userId) => call<CandidateDetail>('GET', `/parties/${encodeURIComponent(id)}/candidates/${encodeURIComponent(userId)}`),
+    createPartyProposal: (partyId, input) => call<ProposalView>('POST', `/parties/${encodeURIComponent(partyId)}/proposals`, input),
+    agreeProposal: (id) => call<ProposalView>('POST', `/proposals/${encodeURIComponent(id)}/agree`),
+    declineProposal: (id) => call<{ id: string; status: string }>('POST', `/proposals/${encodeURIComponent(id)}/decline`),
     previewPartyInvite: (token) => call<PartyInvitePreview>('GET', `/party-invites/${encodeURIComponent(token)}`),
     joinParty: (token) => call<PartyView>('POST', `/party-invites/${encodeURIComponent(token)}/join`),
     listNotifications: () => call<{ items: NotificationView[]; unread: number }>('GET', '/me/notifications'),
@@ -156,7 +159,7 @@ function createHttpBackend(baseUrl: string): Backend {
     getHomeSummary: () => call<HomeSummary>('GET', '/me/home'),
     submitReview: (id, input) => call<{ done: true; mutual: boolean }>('POST', `/appointments/${encodeURIComponent(id)}/review`, input),
     blockUser: (userId) => call<{ blocked: true }>('POST', '/blocks', { userId }),
-    blockCounterpart: (appointmentId) => call<{ blocked: true }>('POST', '/blocks/from-chat', { appointmentId }),
+    blockCounterpart: (appointmentId, targetId) => call<{ blocked: true }>('POST', '/blocks/from-chat', targetId ? { appointmentId, targetId } : { appointmentId }),
     unblockUser: (userId) => call<{ blocked: false }>('DELETE', `/blocks/${encodeURIComponent(userId)}`),
     listBlocks: () => call<BlockView[]>('GET', '/me/blocks'),
     sendReport: (input) => call<{ id: string; received: true; blocked: boolean }>('POST', '/reports', input),
