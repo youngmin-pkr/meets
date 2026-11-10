@@ -10,6 +10,7 @@ import type {
   AppointmentView,
   HelpResult,
   InstantEventView,
+  InstantProposalInput,
   InstantStatusView,
   InstantStyleInput,
   PartyInvitePreview,
@@ -121,6 +122,8 @@ export interface Backend {
   turnOffInstant(eventId: string): Promise<InstantStatusView>;
   getInstantCandidates(eventId: string): Promise<CandidatesResponse>;
   getInstantCandidate(eventId: string, userId: string): Promise<CandidateDetail>;
+  /** 즉석 제안: 지금부터 N분, 공개된 장소에서. 10분 안에 답이 없으면 만료 */
+  sendInstantProposal(eventId: string, input: InstantProposalInput): Promise<ProposalView>;
   createParty(eventId: string): Promise<PartyView>;
   getEventParty(eventId: string): Promise<{ party: PartyView | null }>;
   listParties(): Promise<PartyView[]>;

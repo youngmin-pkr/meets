@@ -71,6 +71,7 @@ export default function App() {
   const [flowError, setFlowError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // 티켓 인증
+  const [sentBack, setSentBack] = useState<Screen>('CANDIDATES');
   const [instantEventId, setInstantEventId] = useState<string | null>(null);
   const [partyEventId, setPartyEventId] = useState<string | null>(null);
   const [partyBack, setPartyBack] = useState<Screen>('PARTY_LIST');
@@ -427,7 +428,17 @@ export default function App() {
             onParties={() => setScreen('PARTY_LIST')}
           />
         )}
-        {screen === 'INSTANT' && instantEventId && <InstantScreen eventId={instantEventId} onBack={() => setScreen('HOME')} />}
+        {screen === 'INSTANT' && instantEventId && (
+          <InstantScreen
+            eventId={instantEventId}
+            onBack={() => setScreen('HOME')}
+            onSent={(p) => {
+              setSentProposal(p);
+              setSentBack('INSTANT');
+              setScreen('PROPOSAL_SENT');
+            }}
+          />
+        )}
         {screen === 'PARTY_LIST' && (
           <PartyListScreen
             onBack={() => setScreen('ME')}
@@ -533,7 +544,7 @@ export default function App() {
           />
         )}
         {screen === 'PROPOSAL_SENT' && sentProposal && (
-          <ProposalSentScreen proposal={sentProposal} onDone={() => setScreen('CANDIDATES')} onHome={() => setScreen('HOME')} />
+          <ProposalSentScreen proposal={sentProposal} onDone={() => setScreen(sentBack)} onHome={() => setScreen('HOME')} />
         )}
         {screen === 'SCHEDULE' && event && draft && (
           <ScheduleScreen
@@ -602,6 +613,7 @@ export default function App() {
             onBack={() => setScreen('CANDIDATES')}
             onSent={(p) => {
               setSentProposal(p);
+              setSentBack('CANDIDATES');
               setScreen('PROPOSAL_SENT');
             }}
           />
