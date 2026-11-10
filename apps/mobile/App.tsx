@@ -58,6 +58,7 @@ import { PartyCandidatesScreen, PartyJoinScreen, PartyListScreen, PartyScreen } 
 import { ReportScreen, ReviewAgainScreen, ReviewDoneScreen, ReviewPickScreen, ReviewStartScreen } from './src/screens/ReviewScreens';
 import { chooseOverall, initialReviewDraft, type ReviewDraft } from './src/reviewFlow';
 import type { Tab } from './src/ui';
+import { swipeBackTarget } from './src/swipeBack';
 
 export default function App() {
   const [config, setConfig] = useState<SignupConfig | null>(null);
@@ -208,7 +209,10 @@ export default function App() {
       ? () => void leaveChat()
       : tabIndex > 0
         ? () => goTab(tabOrder[tabIndex - 1])
-        : undefined;
+        : (() => {
+            const back = swipeBackTarget(screen, { partyBack });
+            return back ? () => setScreen(back) : undefined;
+          })();
 
   function openChat(appointmentId: string, from: Screen) {
     setChatId(appointmentId);
