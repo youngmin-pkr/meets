@@ -217,14 +217,23 @@ export interface PartyInvitePreview {
   problem: string | null;
 }
 
-export function partyGuide(p: { status: PartyStatus; isLeader: boolean; notReady: string[]; memberCount: number; maxSize: number }): string {
+export function partyGuide(p: {
+  status: PartyStatus;
+  isLeader: boolean;
+  /** 입력하지 않은 다른 사람들의 별명 (나는 meNotReady로 따로) */
+  notReady: string[];
+  meNotReady?: boolean;
+  memberCount: number;
+  maxSize: number;
+}): string {
   switch (p.status) {
     case 'INVITING':
       return p.isLeader ? '초대 링크를 친구에게 보내 주세요. 한 명이 합류하면 시작할 수 있어요.' : '친구가 합류하기를 기다리는 중이에요.';
-    case 'CONFIRMING':
-      return p.notReady.length > 0
-        ? `${p.notReady.join(', ')}님이 일정과 스타일을 입력하면 후보를 볼 수 있어요.`
-        : '전원이 입력을 마쳤어요.';
+    case 'CONFIRMING': {
+      const others = p.notReady.length > 0 ? `${p.notReady.join(', ')}님` : '';
+      const who = p.meNotReady ? (others ? `나와 ${others}이` : '내가') : others ? `${others}이` : '';
+      return who ? `${who} 일정·스타일 입력과 티켓 인증을 마치면 후보를 볼 수 있어요.` : '전원이 입력을 마쳤어요.';
+    }
     case 'ACTIVE':
       return '일행 후보를 볼 수 있어요. 같이 볼 시간은 전원이 겹치는 시간이에요.';
     case 'PROPOSING':

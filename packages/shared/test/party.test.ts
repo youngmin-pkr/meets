@@ -222,7 +222,11 @@ describe('입력 마침·초대·안내', () => {
     expect([POLICY_DEFAULTS.PARTY_MIN_SIZE, POLICY_DEFAULTS.PARTY_MAX_SIZE]).toEqual([2, 4]);
   });
 
-  test('안내 문구: 입력하지 않은 친구 이름만 보여 준다', () => {
-    expect(partyGuide({ status: 'CONFIRMING', isLeader: true, notReady: ['하늘', '지우'], memberCount: 3, maxSize: 4 })).toContain('하늘, 지우님');
+  test('안내 문구: 입력하지 않은 사람만 말하고, 나는 "내가"로 말한다', () => {
+    const base = { status: 'CONFIRMING' as const, isLeader: true, memberCount: 3, maxSize: 4 };
+    expect(partyGuide({ ...base, notReady: ['하늘', '지우'] })).toContain('하늘, 지우님이');
+    expect(partyGuide({ ...base, notReady: [], meNotReady: true })).toContain('내가');
+    expect(partyGuide({ ...base, notReady: ['하늘'], meNotReady: true })).toContain('나와 하늘님이');
+    expect(partyGuide({ ...base, notReady: [] })).toBe('전원이 입력을 마쳤어요.');
   });
 });

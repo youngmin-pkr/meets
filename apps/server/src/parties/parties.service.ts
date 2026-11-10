@@ -157,7 +157,7 @@ export class PartiesService {
       minSize: size.minSize,
       maxSize: size.maxSize,
       invite: isLeader && joinable ? { url: `${this.config.publicBaseUrl}/party-invite/${signToken(this.config.ciHashSecret, SCOPE, p.id)}`, expiresAt: p.inviteExpiresAt.toISOString() } : null,
-      guide: partyGuide({ status, isLeader, notReady: notReady.map((m) => m.nickname), memberCount: members.length, maxSize: size.maxSize }),
+      guide: partyGuide({ status, isLeader, notReady: notReady.filter((m) => !m.isMe).map((m) => m.nickname), meNotReady: notReady.some((m) => m.isMe), memberCount: members.length, maxSize: size.maxSize }),
       actions: {
         proceedWithout: isLeader && status === 'CONFIRMING' && notReady.length > 0 && readyCount >= size.minSize,
         disband: isLeader,

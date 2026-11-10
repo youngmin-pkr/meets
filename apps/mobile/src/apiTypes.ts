@@ -9,6 +9,8 @@ import type {
   ChatView,
   AppointmentView,
   HelpResult,
+  PartyInvitePreview,
+  PartyView,
   SafetySettings,
   ShareLinkView,
   CancelReason,
@@ -108,6 +110,19 @@ export interface Backend {
   listShareLinks(appointmentId: string): Promise<ShareLinkView[]>;
   createShareLink(appointmentId: string, showStatus: boolean): Promise<ShareLinkView>;
   revokeShareLink(linkId: string): Promise<{ revoked: true }>;
+  /** 일행 (2~4명, 초대 링크로 합류, 전원이 입력하면 후보가 열림) */
+  createParty(eventId: string): Promise<PartyView>;
+  getEventParty(eventId: string): Promise<{ party: PartyView | null }>;
+  listParties(): Promise<PartyView[]>;
+  getParty(id: string): Promise<PartyView>;
+  leaveParty(id: string): Promise<{ left: true }>;
+  disbandParty(id: string): Promise<{ disbanded: true }>;
+  /** 대표: 입력하지 않은 친구를 빼고 진행 */
+  proceedParty(id: string): Promise<PartyView>;
+  getPartyCandidates(id: string, options: MatchOptions): Promise<CandidatesResponse>;
+  getPartyCandidate(id: string, userId: string): Promise<CandidateDetail>;
+  previewPartyInvite(token: string): Promise<PartyInvitePreview>;
+  joinParty(token: string): Promise<PartyView>;
   listNotifications(): Promise<{ items: NotificationView[]; unread: number }>;
   markNotificationsRead(): Promise<{ unread: number }>;
   getHomeSummary(): Promise<HomeSummary>;

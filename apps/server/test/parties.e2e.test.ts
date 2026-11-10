@@ -101,7 +101,8 @@ describe('합류', () => {
     const party = await createParty(a, ev.id);
     const joined = (await join(n, party.invite.url).expect(200)).body;
     expect(joined.status).toBe('CONFIRMING');
-    expect(joined.guide).toContain('테스트n1');
+    expect(joined.guide).toContain('내가');
+    expect((await getParty(a, party.id).expect(200)).body.guide).toContain('테스트n1님이'); // 대표에게는 친구 이름으로
     expect(joined.members.find((m: { isMe: boolean }) => m.isMe).ready).toBe(false);
     // 입력과 티켓 인증을 마치면 자동으로 활성
     await fx.ready(n, ev);
