@@ -51,6 +51,7 @@ import { AppointmentScreen, CancelAppointmentScreen, HomeScreen, NotificationsSc
 import { EventReportedScreen, EventReportScreen } from './src/screens/EventReportScreen';
 import { ChatListScreen, ChatRulesScreen, ChatScreen } from './src/screens/ChatScreens';
 import { BlockListScreen, MyPageScreen, TrustLevelScreen } from './src/screens/MyScreens';
+import { SafetySettingsScreen } from './src/screens/SafetyScreens';
 import { ReportScreen, ReviewAgainScreen, ReviewDoneScreen, ReviewPickScreen, ReviewStartScreen } from './src/screens/ReviewScreens';
 import { chooseOverall, initialReviewDraft, type ReviewDraft } from './src/reviewFlow';
 import type { Tab } from './src/ui';
@@ -406,8 +407,10 @@ export default function App() {
             onBlocks={() => setScreen('BLOCKS')}
             onProposals={() => setScreen('PROPOSALS')}
             onNotifications={() => setScreen('NOTIFICATIONS')}
+            onSafety={() => setScreen('SAFETY_SETTINGS')}
           />
         )}
+        {screen === 'SAFETY_SETTINGS' && <SafetySettingsScreen onBack={() => setScreen('ME')} />}
         {screen === 'TRUST' && <TrustLevelScreen onBack={() => setScreen('ME')} onEvents={() => goTab('EVENTS')} />}
         {screen === 'BLOCKS' && <BlockListScreen onBack={() => setScreen('ME')} onReport={(a) => openReport(a, 'BLOCKS')} />}
         {screen === 'REVIEW_START' && reviewAppt && (

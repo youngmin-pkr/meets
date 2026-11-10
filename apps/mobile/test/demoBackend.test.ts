@@ -437,7 +437,7 @@ describe('데모: 약속 (전날 확인·취소·알림)', () => {
     await backend.confirmAppointment(a.id);
     await expect(backend.arriveAppointment(a.id)).rejects.toMatchObject({ code: 'APPOINTMENT_NOT_NOW' });
     tick(25 * 60 * 60 * 1000); // 다음 날 13시 (약속 14시)
-    expect((await backend.listNotifications()).items[0].kind).toBe('APPOINTMENT_SOON');
+    expect((await backend.listNotifications()).items.find((n) => n.appointmentId === a.id)!.kind).toBe('APPOINTMENT_SOON');
     expect((await backend.arriveAppointment(a.id)).arrival.mine).not.toBeNull();
     tick(75 * 60 * 1000); // 14:15
     const meeting = await backend.getAppointment(a.id);
@@ -615,7 +615,7 @@ describe('데모: 후기 · 차단 · 신고 · 신뢰 단계', () => {
     tick(30 * 60 * 60 * 1000); // 다음 날 18시 → 만남 끝
     const ended = await backend.getAppointment(tomorrow.id);
     expect(ended).toMatchObject({ status: 'ENDED', review: { canWrite: true } });
-    expect((await backend.listNotifications()).items.filter((n) => n.kind === 'REVIEW_REQUEST')).toHaveLength(2);
+    expect((await backend.listNotifications()).items.filter((n) => n.kind === 'REVIEW_REQUEST' && n.appointmentId === tomorrow.id)).toHaveLength(1);
   });
 
   test('추천에서 빼면 서로 후보에서 사라지고, 차단 목록에 보인다', async () => {
@@ -692,5 +692,106 @@ describe('데모: 후기 · 차단 · 신고 · 신뢰 단계', () => {
     expect((await backend.getCandidates(concert.id, { shortTime: true, immersionPlus: true })).candidates.map((c) => c.nickname)).not.toContain('하늘');
     await expect(backend.getCandidate(concert.id, sky.userId)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(backend.blockUser('nobody')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('데모: 만남 중 안전', () => {
+  async function member() {
+    let clock = new Date('2026-11-07T03:00:00Z'); // 한국 시간 11월 7일 정오
+    const backend = createDemoBackend({ now: () => clock, autoAcceptDelayMs: 1000 });
+    const r = await backend.verifyIdentity('fake:sf1:2000-01-01:F', ALL_TERMS);
+    if (r.outcome !== 'SIGNED_UP') throw new Error();
+    backend.setSessionToken(r.sessionToken);
+    await backend.updateProfile('데모안전', 'ink');
+    await backend.setFandoms([], false);
+    await backend.setNotificationChoice(false);
+    const tick = (min: number) => {
+      clock = new Date(clock.getTime() + min * 60 * 1000);
+    };
+    const list = await backend.listAppointments();
+    return { backend, tick, now: list.find((x) => x.status === 'IN_PROGRESS')! };
+  }
+
+  test('가입하면 지금 만나는 중인 약속이 있고, 도움 요청을 쓸 수 있다', async () => {
+    const { backend, now } = await member();
+    expect(now.safety).toEqual({ canRequestHelp: true, pendingCheck: null });
+    expect(await backend.getSafetySettings()).toEqual({ checkEnabled: true, alertTrusted: false });
+  });
+
+  test('시작 60분 뒤 묻고, 10분 뒤 다시 묻는다. 믿는 사람 알림이 꺼져 있으면 링크에 알리지 않는다', async () => {
+    const { backend, tick, now } = await member();
+    const link = await backend.createShareLink(now.id, true);
+    tick(5);
+    const asked = await backend.getAppointment(now.id);
+    expect(asked.safety.pendingCheck).toMatchObject({ minutesSinceStart: 60 });
+    expect(asked.needsAction).toBe(true);
+    tick(10);
+    await backend.getAppointment(now.id);
+    const kinds = (await backend.listNotifications()).items.map((n) => n.kind);
+    expect(kinds).toContain('SAFETY_CHECK');
+    expect(kinds).toContain('SAFETY_CHECK_REMIND');
+    tick(15);
+    await backend.getAppointment(now.id);
+    expect((await backend.listShareLinks(now.id))[0].preview.alert).toBeNull();
+    expect(link.url).toContain('/share/');
+  });
+
+  test('믿는 사람 알림을 켜 두면 답이 없을 때 링크에 알림이 뜬다', async () => {
+    const { backend, tick, now } = await member();
+    await backend.updateSafetySettings({ alertTrusted: true });
+    await backend.createShareLink(now.id, true);
+    for (const min of [5, 10, 10]) {
+      tick(min); // 서버처럼 시간이 흐르는 동안 앱이 계속 확인합니다
+      await backend.getAppointment(now.id);
+    }
+    expect((await backend.listShareLinks(now.id))[0].preview.alert).toMatchObject({ kind: 'NO_RESPONSE' });
+  });
+
+  test("'괜찮아요'로 답하면 다시 묻지 않는다. 확인을 끄면 묻지 않는다", async () => {
+    const { backend, tick, now } = await member();
+    tick(5);
+    const check = (await backend.getAppointment(now.id)).safety.pendingCheck!;
+    await backend.answerSafetyCheck(now.id, check.id, 'OK');
+    tick(20);
+    const after = await backend.getAppointment(now.id);
+    expect(after.safety.pendingCheck).toBeNull();
+    expect((await backend.listNotifications()).items.map((n) => n.kind)).not.toContain('SAFETY_CHECK_REMIND');
+  });
+
+  test('안전 확인을 끄면 묻지 않는다', async () => {
+    const { backend, tick, now } = await member();
+    await backend.updateSafetySettings({ checkEnabled: false });
+    tick(30);
+    expect((await backend.getAppointment(now.id)).safety.pendingCheck).toBeNull();
+  });
+
+  test('벗어나고 싶어요: 약속이 끝나고 채팅이 닫히며, 화면에는 취소로만 보인다', async () => {
+    const { backend, now } = await member();
+    expect(await backend.requestHelp(now.id)).toEqual({ ended: true, reported: true, trustedNotified: false });
+    const after = await backend.getAppointment(now.id);
+    expect(after.status).toBe('ENDED_EARLY');
+    expect(after.end).toMatchObject({ reason: 'CANCELLED', byMe: true, late: false });
+    expect((await backend.getChat(now.id)).open).toBe(false);
+    await expect(backend.requestHelp(now.id)).rejects.toMatchObject({ code: 'SAFETY_NOT_NOW' });
+    await expect(backend.createShareLink(now.id, true)).rejects.toMatchObject({ code: 'SHARE_NOT_ALLOWED' });
+  });
+
+  test('아직 도착 버튼이 열리지 않은 내일 약속에는 도움 요청을 쓸 수 없다', async () => {
+    const { backend } = await member();
+    const tomorrow = (await backend.listAppointments()).find((x) => x.status === 'PENDING_CONFIRM')!;
+    expect(tomorrow.safety.canRequestHelp).toBe(false);
+    await expect(backend.requestHelp(tomorrow.id)).rejects.toMatchObject({ code: 'SAFETY_NOT_NOW' });
+  });
+
+  test('링크에는 행사·시간·장소·동행 별명만 있고, 끄면 사라진다', async () => {
+    const { backend, now } = await member();
+    const link = await backend.createShareLink(now.id, false);
+    expect(Object.keys(link.preview).sort()).toEqual(['alert', 'arrivedAt', 'companion', 'eventName', 'expiresAt', 'spotName', 'status', 'when']);
+    expect(link.preview.status).toBeNull();
+    expect(JSON.stringify(link)).not.toMatch(/demo-user|demo-sample/);
+    expect(await backend.listShareLinks(now.id)).toHaveLength(1);
+    await backend.revokeShareLink(link.id);
+    expect(await backend.listShareLinks(now.id)).toEqual([]);
+    await expect(backend.revokeShareLink(link.id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });

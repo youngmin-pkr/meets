@@ -25,7 +25,9 @@ export type NotificationKind =
   | 'REVIEW_MUTUAL_AGAIN'
   | 'REPORT_RESULT'
   | 'ADMIN_WARNING'
-  | 'ADMIN_RESTRICTION';
+  | 'ADMIN_RESTRICTION'
+  | 'SAFETY_CHECK'
+  | 'SAFETY_CHECK_REMIND';
 
 export interface NotificationParams {
   nickname?: string;
@@ -103,6 +105,10 @@ export function notificationText(kind: NotificationKind, p: NotificationParams):
       return p.upheld
         ? { title: '신고를 확인했어요', body: '운영팀이 신고하신 내용을 확인하고 필요한 조치를 했어요. 신고하신 분의 정보는 상대에게 공개되지 않아요.' }
         : { title: '신고를 확인했어요', body: '운영팀이 확인했지만 조치할 내용을 찾지 못했어요. 위험하다고 느끼면 언제든 다시 알려 주세요.' };
+    case 'SAFETY_CHECK':
+      return { title: '잘 만나고 계세요?', body: `${ev} 만남 중이에요. 짧게 확인만 할게요. 상대에게는 보이지 않아요.` };
+    case 'SAFETY_CHECK_REMIND':
+      return { title: '한 번만 더 확인할게요', body: `${ev} 만남은 잘 이어지고 있나요? 답하지 않아도 괜찮아요.` };
     case 'ADMIN_WARNING':
       return { title: '운영 안내', body: '다른 이용자의 신고가 확인되어 안내드려요. 모두가 편안하게 만날 수 있도록 이용 규칙을 지켜 주세요.' };
     case 'ADMIN_RESTRICTION':

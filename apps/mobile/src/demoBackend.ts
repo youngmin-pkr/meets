@@ -22,7 +22,17 @@ import {
   type TrustView,
   arrivedLine,
   CHAT_STATUS_LINES,
+  canRequestHelp,
   chatClosesAt,
+  dueSafetySteps,
+  sharedStatusOf,
+  shareLinkExpiresAt,
+  DEFAULT_SAFETY_SETTINGS,
+  type HelpResult,
+  type SafetySettings,
+  type SafetyStep,
+  type ShareLinkView,
+  type SharedAppointmentView,
   checkChatBody,
   CLOSED_APPOINTMENT_STATUSES,
   detectContact,
@@ -123,6 +133,7 @@ interface DemoUser {
   profileDone: boolean;
   fandomDone: boolean;
   signupDone: boolean;
+  safety: SafetySettings;
 }
 
 /** 데모에서 고를 수 있는 팬덤 (시험용 이름) */
@@ -238,6 +249,8 @@ interface DemoAppointment {
   endedAt: Date | null;
   /** 서로 '또 같이 가고 싶어요'를 골라 만남이 끝나도 채팅이 닫히지 않음 */
   chatExtended: boolean;
+  /** 도움 요청으로 끝남: 채팅이 바로 닫힘 */
+  endedBySafety: boolean;
   /** 앱 안 채팅 */
   messages: DemoMessage[];
   /** 사람별로 어디까지 읽었는지 */
@@ -349,6 +362,16 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
   /** 차단: 키는 '차단한 사람>차단당한 사람' */
   const blockMap = new Map<string, { blockerId: string; blockedId: string; source: BlockSource; at: Date }>();
   const reviews: Array<{ appointmentId: string; authorId: string; targetId: string; overall: ReviewOverall; again: ReviewAgain }> = [];
+  /** 안전 확인 (묻고, 다시 묻고, 믿는 사람에게 알림) */
+  const safetyChecks: Array<{ id: string; appointmentId: string; userId: string; seq: number; askedAt: Date; remindedAt: Date | null; answeredAt: Date | null; alertedAt: Date | null }> = [];
+  /** 믿는 사람에게 보내는 링크 */
+  const shareLinks: Array<{ id: string; appointmentId: string; creatorId: string; showStatus: boolean; revokedAt: Date | null; alertKind: 'HELP' | 'NO_RESPONSE' | null; alertAt: Date | null; createdAt: Date }> = [];
+  let safetySeq = 0;
+  const safetyPolicy = {
+    maxCount: POLICY_DEFAULTS.SAFETY_CHECK_MAX_COUNT,
+    intervalMinutes: POLICY_DEFAULTS.SAFETY_CHECK_INTERVAL_MINUTES,
+    reaskMinutes: POLICY_DEFAULTS.SAFETY_CHECK_REASK_MINUTES,
+  };
   const reports: Array<{ id: string; reporterId: string; appointmentId: string; category: ReportCategory; open: boolean }> = [];
   const isBlockedBetween = (x: string, y: string) => blockMap.has(`${x}>${y}`) || blockMap.has(`${y}>${x}`);
   let notificationSeq = 0;
@@ -411,7 +434,82 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         if (a.sampleConfirmAt === null) a.sampleConfirmAt = t + autoAcceptDelayMs;
         else if (a.sampleConfirmAt <= t) confirmInternal(a, u);
       }
+      if (a.status === 'IN_PROGRESS') runSafetyChecks(a);
     }
+  }
+
+  /** 만남 중인 약속의 안전 확인: 정해진 시각에 묻고, 답이 없으면 다시 묻고, 믿는 사람 링크에 알립니다. (서버의 SafetyChecksService와 같은 규칙) */
+  function runSafetyChecks(a: DemoAppointment) {
+    const { startsAt, endsAt } = rangeOf(a.date, a.startTime, a.endTime);
+    for (const userId of a.users) {
+      const u = users.find((x) => x.id === userId);
+      if (!u || !u.safety.checkEnabled) continue;
+      const mine = safetyChecks.filter((c) => c.appointmentId === a.id && c.userId === userId);
+      const busy = mine.some((c) => !c.answeredAt && !c.alertedAt);
+      for (const step of dueSafetySteps(startsAt, endsAt, mine, now(), safetyPolicy)) {
+        if (step.kind === 'ASK' && busy) continue;
+        applySafetyStep(a, u, step);
+        if (step.kind === 'ASK') break;
+      }
+    }
+  }
+
+  function applySafetyStep(a: DemoAppointment, u: DemoUser, step: SafetyStep) {
+    const target = { appointmentId: a.id };
+    const params = { eventName: eventName(a.eventId) };
+    const c = safetyChecks.find((x) => x.appointmentId === a.id && x.userId === u.id && x.seq === step.seq);
+    if (step.kind === 'ASK') {
+      if (c) return;
+      safetyChecks.push({ id: `demo-safety-${++safetySeq}`, appointmentId: a.id, userId: u.id, seq: step.seq, askedAt: now(), remindedAt: null, answeredAt: null, alertedAt: null });
+      notify(u.id, 'SAFETY_CHECK', params, target);
+    } else if (step.kind === 'REMIND' && c && !c.remindedAt) {
+      c.remindedAt = now();
+      notify(u.id, 'SAFETY_CHECK_REMIND', params, target);
+    } else if (step.kind === 'ALERT' && c && !c.alertedAt) {
+      c.alertedAt = now();
+      if (u.safety.alertTrusted) markLinks(a.id, u.id, 'NO_RESPONSE');
+    }
+  }
+
+  function markLinks(appointmentId: string, creatorId: string, kind: 'HELP' | 'NO_RESPONSE') {
+    for (const l of shareLinks) {
+      if (l.appointmentId === appointmentId && l.creatorId === creatorId && !l.revokedAt) {
+        l.alertKind = kind;
+        l.alertAt = now();
+      }
+    }
+  }
+
+  /** 링크 한 건의 화면 내용 (받는 사람이 보는 것과 같음) */
+  function shareLinkView(l: (typeof shareLinks)[number]): { view: ShareLinkView; expired: boolean } {
+    const a = appointments.find((x) => x.id === l.appointmentId)!;
+    const other = a.users.find((x) => x !== l.creatorId)!;
+    const { startsAt, endsAt } = rangeOf(a.date, a.startTime, a.endTime);
+    const basis = a.endedAt && a.endedAt < endsAt ? a.endedAt : endsAt;
+    const expiresAt = shareLinkExpiresAt(basis, POLICY_DEFAULTS.SHARE_LINK_EXPIRE_HOURS_AFTER_END);
+    const arrivedAt = a.parts[l.creatorId].arrivedAt;
+    const preview: SharedAppointmentView = {
+      eventName: eventName(a.eventId),
+      when: formatSeoulShort(startsAt),
+      spotName: a.meetingSpotName,
+      companion: nicknameOf(other),
+      status: l.showStatus ? sharedStatusOf(a.status, arrivedAt) : null,
+      arrivedAt: l.showStatus && arrivedAt ? arrivedAt.toISOString() : null,
+      alert: l.alertKind && l.alertAt ? { kind: l.alertKind, at: l.alertAt.toISOString() } : null,
+      expiresAt: expiresAt.toISOString(),
+    };
+    return {
+      expired: !!l.revokedAt || now() >= expiresAt,
+      view: {
+        id: l.id,
+        appointmentId: a.id,
+        url: `https://meets.example.com/share/${l.id}`,
+        showStatus: l.showStatus,
+        expiresAt: expiresAt.toISOString(),
+        preview,
+        eventName: eventName(a.eventId),
+      },
+    };
   }
 
   function factsOf(a: DemoAppointment): AppointmentFacts {
@@ -538,6 +636,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       sampleConfirmAt: null,
       endedAt: null,
       chatExtended: false,
+      endedBySafety: false,
       messages: [],
       readSeq: {},
       sampleReplyAt: null,
@@ -550,6 +649,24 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     if (sample) addMessage(a, sample, 'TEXT', SAMPLE_GREETING);
     notify(p.senderId, 'PROPOSAL_ACCEPTED', { nickname: nicknameOf(p.receiverId), eventName: eventName(p.eventId) }, { appointmentId: a.id });
     return a;
+  }
+
+  /** '벗어나고 싶어요': 약속을 끝내고 채팅을 닫습니다. 상대에게는 사유 없이 '취소'로만 보입니다. */
+  function helpInternal(a: DemoAppointment, user: DemoUser): HelpResult {
+    const t = factsTimes(factsOf(a));
+    if (!canRequestHelp(a.status, now(), { startsAt: t.startsAt, endsAt: t.endsAt }, a.policy.arrivalOpenMinutes)) {
+      throw new ApiError('SAFETY_NOT_NOW', '지금은 도움 요청을 쓸 수 없어요. 나중에 문제가 있었다면 신고로 알려 주세요.');
+    }
+    setStatus(a, 'ENDED_EARLY');
+    a.endReason = 'CANCELLED';
+    a.cancelledBy = user.id;
+    a.endedBySafety = true;
+    a.parts[user.id].lateCancel = false;
+    for (const c of safetyChecks) if (c.appointmentId === a.id && c.userId === user.id && !c.answeredAt) c.answeredAt = now();
+    if (user.safety.alertTrusted) markLinks(a.id, user.id, 'HELP');
+    const other = a.users.find((x) => x !== user.id)!;
+    notify(other, 'APPOINTMENT_CANCELLED', { nickname: nicknameOf(user.id), eventName: eventName(a.eventId), reason: null }, { appointmentId: a.id });
+    return { ended: true, reported: true, trustedNotified: user.safety.alertTrusted };
   }
 
   let messageSeq = 0;
@@ -571,7 +688,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     // 차단한 두 사람의 채팅은 닫힙니다. (지난 대화는 읽을 수 있음)
     if (isBlockedBetween(a.users[0], a.users[1])) return now();
     return chatClosesAt(
-      { status: a.status, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended },
+      { status: a.status, endsAt: seoulDateTime(a.date, a.endTime), endedAt: a.endedAt, extended: a.chatExtended, endedBySafety: a.endedBySafety },
       { closeHoursAfterEnd: POLICY_DEFAULTS.CHAT_CLOSE_HOURS_AFTER_END },
     );
   }
@@ -624,6 +741,8 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     const mine = a.parts[me];
     const theirs = a.parts[other];
     const actions = appointmentActions(f, me, now(), { newScheduleAvailable: false });
+    const pendingCheck =
+      a.status === 'IN_PROGRESS' ? safetyChecks.filter((c) => c.appointmentId === a.id && c.userId === me && !c.answeredAt).sort((x, y) => y.seq - x.seq)[0] : undefined;
     const byMe =
       a.endReason === 'CANCELLED' ? a.cancelledBy === me : a.endReason === 'NO_CONFIRM' ? mine.noResponse : a.endReason === 'NO_SHOW' ? !!mine.noShowReportedAt : false;
     return {
@@ -650,9 +769,15 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
           }
         : null,
       actions,
-      needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow,
+      needsAction: actions.confirm || actions.reconfirm || actions.arrive || actions.reportNoShow || !!pendingCheck,
       unreadMessages: unreadOf(a, me),
       review: reviewStateOf(a, me, t.endsAt),
+      safety: {
+        canRequestHelp: canRequestHelp(a.status, now(), { startsAt: t.startsAt, endsAt: t.endsAt }, a.policy.arrivalOpenMinutes),
+        pendingCheck: pendingCheck
+          ? { id: pendingCheck.id, askedAt: pendingCheck.askedAt.toISOString(), minutesSinceStart: Math.max(0, Math.floor((now().getTime() - t.startsAt.getTime()) / 60000)) }
+          : null,
+      },
     };
   }
 
@@ -755,6 +880,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       sampleConfirmAt: null,
       endedAt: seoulDateTime(date, '17:00'),
       chatExtended: false,
+      endedBySafety: false,
       messages: [],
       readSeq: {},
       sampleReplyAt: null,
@@ -798,6 +924,57 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
     const a = acceptInternal(p, { confirmOpensAt: now() });
     a.parts[sky].confirmedAt = now();
     a.parts[sky].dayBeforeNotifiedAt = now();
+  }
+
+  /**
+   * 데모 전용: '지금 만나는 중'인 약속. 안전 확인과 도움 요청을 바로 해 볼 수 있도록 만남이 시작된 지 55분쯤 지난 상태로 둡니다.
+   * (5분쯤 뒤 '잘 만나고 계세요?'가 와요.) 자정 무렵에는 오늘 0시부터 시작한 것으로 둡니다.
+   */
+  function seedNowAppointment(userId: string) {
+    const ev = events[1]?.detail ?? events[0].detail;
+    const day = ev.days[0];
+    const spot = ev.meetingSpots[0];
+    const sound = `demo-sample-${SAMPLE_PEOPLE[2]?.key ?? SAMPLE_PEOPLE[0].key}`;
+    if (!day || !spot) return;
+    const p: DemoProposal = {
+      id: `demo-proposal-${++proposalSeq}`,
+      senderId: sound,
+      receiverId: userId,
+      eventId: ev.id,
+      eventDayId: day.id,
+      segmentIds: [],
+      meetingSpotId: spot.id,
+      status: 'SENT',
+      expiresAt: now(),
+      createdAt: now().getTime() - 2 * 24 * 60 * 60 * 1000,
+      autoAcceptAt: null,
+    };
+    proposals.push(p);
+    const a = acceptInternal(p);
+    const hhmm = (d: Date) => {
+      const k = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+      return `${String(k.getUTCHours()).padStart(2, '0')}:${String(k.getUTCMinutes()).padStart(2, '0')}`;
+    };
+    const ymd = (d: Date) => new Date(d.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    let start = new Date(now().getTime() - 55 * 60 * 1000);
+    if (ymd(start) !== ymd(now())) start = seoulDateTime(ymd(now()), '00:00');
+    const endAt = new Date(Math.min(start.getTime() + 3 * 60 * 60 * 1000, seoulDateTime(ymd(start), '23:59').getTime()));
+    a.date = ymd(start);
+    a.startTime = hhmm(start);
+    a.endTime = hhmm(endAt);
+    a.segments = [{ id: 'demo-segment-now', label: '같이 둘러보기', startTime: a.startTime, endTime: a.endTime }];
+    a.status = 'IN_PROGRESS';
+    for (const u of a.users) {
+      a.parts[u].confirmedAt = now();
+      a.parts[u].arrivedAt = start;
+      a.parts[u].dayBeforeNotifiedAt = now();
+    }
+    a.messages = [];
+    for (const status of ['PENDING_CONFIRM', 'CONFIRMED', 'IN_PROGRESS'] as const) addMessage(a, null, 'SYSTEM', CHAT_STATUS_LINES[status]!);
+    addMessage(a, sound, 'TEXT', '저 입구 쪽 포토존 앞에 있어요! 천천히 오세요.');
+    a.sampleReplies = 0;
+    // 알림함에는 약속이 만들어졌다는 알림만 남기고, 안내는 쌓지 않습니다.
+    for (let i = notifications.length - 1; i >= 0; i--) if (notifications[i].appointmentId === a.id) notifications.splice(i, 1);
   }
 
   function newProposal(senderId: string, receiverId: string, eventId: string, eventDayId: string, segmentIds: string[], meetingSpotId: string): DemoProposal {
@@ -989,6 +1166,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
         profileDone: false,
         fandomDone: false,
         signupDone: false,
+        safety: { ...DEFAULT_SAFETY_SETTINGS },
       };
       users.push(user);
       return delay({ outcome: 'SIGNED_UP', sessionToken: newSession(user), nextStep: 'PROFILE' });
@@ -1054,6 +1232,7 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       if (!user.signupDone) {
         seedPastAppointment(user.id);
         seedTomorrowAppointment(user.id);
+        seedNowAppointment(user.id);
       }
       user.signupDone = true;
       return delay(toMe(user));
@@ -1440,6 +1619,60 @@ export function createDemoBackend(options: { now?: () => Date; autoAcceptDelayMs
       a.parts[user.id].noShowReportedAt = now();
       notify(a.users.find((u) => u !== user.id)!, 'APPOINTMENT_ENDED_EARLY', { eventName: eventName(a.eventId) }, { appointmentId: a.id });
       return delay(appointmentView(a, user.id));
+    },
+
+    async getSafetySettings() {
+      return delay({ ...currentUser().safety });
+    },
+
+    async updateSafetySettings(patch) {
+      const user = currentUser();
+      user.safety = { ...user.safety, ...patch };
+      return delay({ ...user.safety });
+    },
+
+    async requestHelp(id) {
+      const { user, a } = myAppointment(id);
+      return delay(helpInternal(a, user));
+    },
+
+    async answerSafetyCheck(id, checkId, answer) {
+      const { user, a } = myAppointment(id);
+      const c = safetyChecks.find((x) => x.id === checkId && x.appointmentId === id && x.userId === user.id);
+      if (!c) throw new ApiError('NOT_FOUND', '확인 요청을 찾을 수 없어요.');
+      if (answer === 'HELP') return delay(helpInternal(a, user));
+      if (!c.answeredAt) c.answeredAt = now();
+      return delay(appointmentView(a, user.id));
+    },
+
+    async listShareLinks(appointmentId) {
+      const user = currentUser();
+      settle();
+      return delay(
+        shareLinks
+          .filter((l) => l.creatorId === user.id && l.appointmentId === appointmentId && !l.revokedAt)
+          .map(shareLinkView)
+          .filter((x) => !x.expired)
+          .map((x) => x.view),
+      );
+    },
+
+    async createShareLink(appointmentId, showStatus) {
+      const { user, a } = myAppointment(appointmentId);
+      if (!['PENDING_CONFIRM', 'CONFIRMED', 'IN_PROGRESS'].includes(a.status)) {
+        throw new ApiError('SHARE_NOT_ALLOWED', '이미 끝났거나 취소된 약속은 믿는 사람에게 알릴 수 없어요.');
+      }
+      const l = { id: `demo-link-${++safetySeq}`, appointmentId, creatorId: user.id, showStatus, revokedAt: null, alertKind: null, alertAt: null, createdAt: now() };
+      shareLinks.push(l);
+      return delay(shareLinkView(l).view);
+    },
+
+    async revokeShareLink(linkId) {
+      const user = currentUser();
+      const l = shareLinks.find((x) => x.id === linkId && x.creatorId === user.id && !x.revokedAt);
+      if (!l) throw new ApiError('NOT_FOUND', '링크를 찾을 수 없어요.');
+      l.revokedAt = now();
+      return delay({ revoked: true as const });
     },
 
     async listNotifications() {

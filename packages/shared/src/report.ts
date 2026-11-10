@@ -18,7 +18,11 @@ export type ReportCategory = keyof typeof REPORT_CATEGORIES;
 export const REPORT_CATEGORY_CODES = Object.keys(REPORT_CATEGORIES) as ReportCategory[];
 
 /** 사용자가 고를 수 없고 시스템이 만드는 분류: '안 나왔어요'를 누르면 운영팀이 양쪽 도착 기록을 보고 판단합니다 */
-export const SYSTEM_REPORT_CATEGORIES = { NO_SHOW: '안 나왔어요 (도착 기록 확인)' } as const;
+export const SYSTEM_REPORT_CATEGORIES = {
+  NO_SHOW: '안 나왔어요 (도착 기록 확인)',
+  /** '불편해서 벗어나고 싶어요': 약속을 끝내고 운영팀에 가장 먼저 접수 */
+  HELP_REQUEST: '도움 요청 (벗어나고 싶어요)',
+} as const;
 export type ReportCategoryAll = ReportCategory | keyof typeof SYSTEM_REPORT_CATEGORIES;
 export const REPORT_CATEGORY_LABELS: Record<ReportCategoryAll, string> = { ...REPORT_CATEGORIES, ...SYSTEM_REPORT_CATEGORIES };
 

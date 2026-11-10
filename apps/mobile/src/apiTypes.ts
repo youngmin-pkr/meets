@@ -8,6 +8,9 @@ import type {
   ChatSummary,
   ChatView,
   AppointmentView,
+  HelpResult,
+  SafetySettings,
+  ShareLinkView,
   CancelReason,
   NotificationView,
   ProposalInput,
@@ -96,6 +99,15 @@ export interface Backend {
   cancelAppointment(id: string, reason?: CancelReason): Promise<AppointmentView>;
   arriveAppointment(id: string): Promise<AppointmentView>;
   reportNoShow(id: string): Promise<AppointmentView>;
+  /** 안전: 설정, 도움 요청('벗어나고 싶어요'), 안전 확인 답, 믿는 사람 링크 */
+  getSafetySettings(): Promise<SafetySettings>;
+  updateSafetySettings(patch: Partial<SafetySettings>): Promise<SafetySettings>;
+  requestHelp(appointmentId: string): Promise<HelpResult>;
+  /** 'HELP'로 답하면 도움 요청과 같습니다 */
+  answerSafetyCheck(appointmentId: string, checkId: string, answer: 'OK' | 'HELP'): Promise<AppointmentView | HelpResult>;
+  listShareLinks(appointmentId: string): Promise<ShareLinkView[]>;
+  createShareLink(appointmentId: string, showStatus: boolean): Promise<ShareLinkView>;
+  revokeShareLink(linkId: string): Promise<{ revoked: true }>;
   listNotifications(): Promise<{ items: NotificationView[]; unread: number }>;
   markNotificationsRead(): Promise<{ unread: number }>;
   getHomeSummary(): Promise<HomeSummary>;

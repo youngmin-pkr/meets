@@ -28,6 +28,7 @@ import { Body, Card, ErrorText, keepWords, Page, Pill, PrimaryButton, styles, Ta
 import { EventArt } from '../EventArt';
 import { HomeSlider } from './HomeSlider';
 import { Avatar, dateText, Row } from './ProposalScreens';
+import { SafetySection } from './SafetyScreens';
 
 const todayIso = () => {
   const t = todayInSeoul();
@@ -307,6 +308,7 @@ export function AppointmentScreen(props: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [askNoShow, setAskNoShow] = useState(false);
+  const [helped, setHelped] = useState(false);
   const mode = appointmentMode(a);
 
   const reload = useCallback(() => {
@@ -315,6 +317,11 @@ export function AppointmentScreen(props: {
   useEffect(reload, [reload]);
   // 상대를 기다리는 동안에는 가끔 다시 불러와서, 상대가 확인하면 바로 바뀌게 합니다.
   useEffect(() => {
+    // 만남 중에는 안전 확인이 오는지 보려고 조금 느리게 다시 불러옵니다.
+    if (mode === 'MEETING') {
+      const slow = setInterval(reload, 15000);
+      return () => clearInterval(slow);
+    }
     if (mode !== 'WAITING_PARTNER' && !(mode === 'RESCHEDULE' && a.reschedule?.mine)) return;
     const timer = setInterval(reload, 4000);
     return () => clearInterval(timer);
@@ -486,6 +493,8 @@ export function AppointmentScreen(props: {
           <Note>{`${formatSeoulShort(a.reschedule.deadline)}까지 정하지 못하면 보류돼요. 보류는 취소가 아니고 신뢰 단계에 영향이 없어요.`}</Note>
         </View>
       ) : null}
+
+      {!closed || helped ? <SafetySection appointment={a} helped={helped} onHelped={() => setHelped(true)} onChanged={setA} /> : null}
 
       {a.actions.cancel ? (
         <Note>{`${formatSeoulShort(a.freeCancelUntil)}까지 취소하면 신뢰 단계에 영향이 없어요. 그 뒤의 취소나 무응답은 반영돼요.`}</Note>

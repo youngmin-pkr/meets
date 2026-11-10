@@ -39,6 +39,9 @@ import { SERVER_CONFIG, type ServerConfig } from './config';
 import { FakeIdentityProvider, IDENTITY_PROVIDER } from './identity/identity-provider';
 import { PolicyService } from './policy/policy.service';
 import { PrismaService } from './prisma/prisma.service';
+import { SafetyChecksService } from './safety/safety-checks.service';
+import { SafetyController, SharedLinkController } from './safety/safety.controller';
+import { SafetyService } from './safety/safety.service';
 import { SignupController } from './signup/signup.controller';
 import { SignupService } from './signup/signup.service';
 
@@ -47,7 +50,7 @@ export class AppModule {
   static register(config: ServerConfig, clock: Clock = systemClock, random: RandomSource = Math.random): DynamicModule {
     return {
       module: AppModule,
-      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController, AdminReportsController],
+      controllers: [SignupController, EventsController, AdminController, MatchingController, TicketsController, ProposalsController, AppointmentsController, ChatController, ReviewsController, BlocksController, AdminReportsController, SafetyController, SharedLinkController],
       providers: [
         { provide: SERVER_CONFIG, useValue: config },
         { provide: CLOCK, useValue: clock },
@@ -84,6 +87,8 @@ export class AppModule {
         ReportStateService,
         ReportsService,
         AdminReportsService,
+        SafetyChecksService,
+        SafetyService,
       ],
     };
   }

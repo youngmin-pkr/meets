@@ -24,6 +24,7 @@ function view(o: Partial<AppointmentView> = {}): AppointmentView {
     needsAction: false,
     unreadMessages: 0,
     review: { canWrite: false, done: false, deadline: '2026-12-20T08:00:00.000Z' },
+    safety: { canRequestHelp: false, pendingCheck: null },
     ...o,
   };
 }
@@ -88,5 +89,12 @@ describe('홈', () => {
       view({ id: 'soon', status: 'CONFIRMED', startsAt: '2026-12-01T05:00:00.000Z' }),
     ];
     expect(upcomingAppointments(list).map((a) => a.id)).toEqual(['soon', 'late']);
+  });
+});
+
+describe('만남 중에 내가 끝낸 약속', () => {
+  test("도움 요청·차단으로 끝나면 '취소'가 아니라 '만남을 끝냈어요'", () => {
+    const v = view({ status: 'ENDED_EARLY', end: { reason: 'CANCELLED', byMe: true, cancelReason: null, late: false } });
+    expect(appointmentHeadline(v, { today: '2026-12-13' })).toEqual({ title: '만남을 끝냈어요', body: '내 신뢰 단계에는 영향이 없어요.' });
   });
 });

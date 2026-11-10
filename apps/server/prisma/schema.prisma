@@ -41,6 +41,10 @@ model User {
   status                AccountStatus       @default(ACTIVE)
   fandomPublic          Boolean             @default(false)
   trustLevel            Int                 @default(1)
+  /// 안전 확인 받기 (기본 켜짐)
+  safetyCheckEnabled    Boolean             @default(true)
+  /// 도움 요청·안전 확인 무응답 때 믿는 사람 링크에도 알리기 (기본 꺼짐)
+  safetyAlertTrusted    Boolean             @default(false)
   profileCompletedAt    DateTime?
   fandomStepCompletedAt DateTime?
   notificationChoice    NotificationChoice?
@@ -70,6 +74,8 @@ model User {
   reportsReceived     Report[]   @relation("ReportTarget")
   trustChanges        TrustChange[]
   restrictions        UserRestriction[]
+  shareLinks          ShareLink[]
+  safetyChecks        SafetyCheck[]
 }
 
 /// 본인 확인 기록. 이름·전화번호는 저장하지 않고,
@@ -561,6 +567,8 @@ model Appointment {
   chatReads     ChatRead[]
   reviews       Review[]
   reports       Report[]
+  shareLinks    ShareLink[]
+  safetyChecks  SafetyCheck[]
   /// 서로 '또 같이 가고 싶어요'를 골라 만남이 끝나도 채팅이 닫히지 않음
   chatExtended  Boolean       @default(false)
 
@@ -616,6 +624,8 @@ enum NotificationKind {
   REPORT_RESULT
   ADMIN_WARNING
   ADMIN_RESTRICTION
+  SAFETY_CHECK
+  SAFETY_CHECK_REMIND
 }
 
 /// 앱 안 알림함 (정리문서 8장). 푸시 업체가 정해지면 pushAt 이후에 같은 내용을 푸시로 보냅니다.
@@ -732,6 +742,8 @@ enum ReportCategory {
   OTHER
   /// 사용자가 고르는 분류가 아니라, '안 나왔어요'를 누르면 시스템이 만듭니다
   NO_SHOW
+  /// '불편해서 벗어나고 싶어요'. 약속을 끝내고 운영팀에 가장 먼저 접수합니다
+  HELP_REQUEST
 }
 
 /// 도움 요청 > 청소년 신고 > 일반 신고 (정리문서 5장)
@@ -808,4 +820,45 @@ model TrustChange {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+}
+
+/// 믿는 사람에게 보내는 링크 (정리문서 2장 "안전", 정책 값 9)
+/// 주소는 링크 번호에 서버 비밀 값으로 서명해서 만들기 때문에 주소 원문은 저장하지 않습니다.
+/// 링크 화면에는 행사·시간·장소·동행 별명만 보입니다. 연락처는 받지 않습니다.
+model ShareLink {
+  id            String      @id @default(uuid())
+  appointmentId String
+  creatorId     String
+  /// 도착·종료 상태도 보여 주기
+  showStatus    Boolean
+  /// 약속이 끝나고 몇 시간 뒤 사라지는지 (만들 때의 정책 값. 소급하지 않음)
+  expireHours   Int
+  createdAt     DateTime    @default(now())
+  revokedAt     DateTime?
+  /// 믿는 사람 알림을 미리 켜 둔 경우에만: HELP | NO_RESPONSE
+  alertKind     String?
+  alertAt       DateTime?
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  creator       User        @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, appointmentId])
+}
+
+/// 안전 확인 (정리문서 4장 SafetyEvent의 '안전 확인'). 상대에게는 보이지 않습니다.
+model SafetyCheck {
+  id            String      @id @default(uuid())
+  appointmentId String
+  userId        String
+  /// 몇 번째 확인인지 (1부터)
+  seq           Int
+  askedAt       DateTime
+  remindedAt    DateTime?
+  /// OK | HELP
+  answer        String?
+  answeredAt    DateTime?
+  alertedAt     DateTime?
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([appointmentId, userId, seq])
 }

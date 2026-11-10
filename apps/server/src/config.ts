@@ -7,6 +7,8 @@ export interface ServerConfig {
   ciHashSecret: string;
   identityProvider: 'fake';
   isProduction: boolean;
+  /** 믿는 사람에게 보내는 링크 주소의 앞부분 (예: https://meets.example.com) */
+  publicBaseUrl: string;
 }
 
 export const SERVER_CONFIG = Symbol('SERVER_CONFIG');
@@ -26,5 +28,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     // 테스트용 가짜 본인 확인으로는 누구나 아무 나이로 가입할 수 있으므로 실제 서비스에서는 막습니다.
     throw new Error('실제 서비스(production)에서는 테스트용 본인 확인(fake)을 쓸 수 없습니다.');
   }
-  return { databaseUrl, ciHashSecret, identityProvider, isProduction };
+  const publicBaseUrl = (env.PUBLIC_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
+  return { databaseUrl, ciHashSecret, identityProvider, isProduction, publicBaseUrl };
 }

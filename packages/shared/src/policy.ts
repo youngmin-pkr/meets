@@ -96,6 +96,14 @@ export const POLICY_DEFAULTS = {
   REPORT_RESTRICT_DAYS: 7,
   /** 운영자가 열람·조치 사유로 적어야 하는 최소 글자 수 (사유 없이 열람하는 것을 막음) */
   ADMIN_REASON_MIN_LENGTH: 5,
+  /** 안전 확인: 약속 하나에 최대 몇 번 묻는지 (정리문서 정책 값 10) */
+  SAFETY_CHECK_MAX_COUNT: 2,
+  /** 안전 확인: 만남이 시작되고 첫 확인까지, 그리고 확인 사이의 간격(분) (정책 값 10. 첫 확인 시각은 2026-11-10 사용자 확인) */
+  SAFETY_CHECK_INTERVAL_MINUTES: 60,
+  /** 안전 확인: 답이 없으면 다시 묻기까지, 그리고 그래도 없으면 믿는 사람에게 알리기까지(분) (정책 값 10) */
+  SAFETY_CHECK_REASK_MINUTES: 10,
+  /** 믿는 사람에게 보내는 링크는 약속이 끝나고 몇 시간 뒤 사라지는지 (정책 값 9) */
+  SHARE_LINK_EXPIRE_HOURS_AFTER_END: 6,
 } as const;
 
 export type PolicyKey = keyof typeof POLICY_DEFAULTS;
